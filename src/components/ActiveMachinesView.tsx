@@ -12,7 +12,7 @@ import { db } from '../firebase';
 import { useAuth } from './Auth';
 import { useToast } from './ToastContext';
 import { useData } from './DataContext';
-import { MaintenanceStop, Forklift } from '../types';
+import { MaintenanceStop, Forklift, ForkliftStatus } from '../types';
 import { Clock, AlertTriangle, Ban, AlertCircle, Wrench, CheckCircle2, Timer, PauseCircle, History as HistoryIcon } from 'lucide-react';
 import { cn, formatDuration } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/firebaseUtils';
@@ -20,8 +20,7 @@ import { handleFirestoreError, OperationType } from '../lib/firebaseUtils';
 export function ActiveMachinesView() {
   const { profile, loading: authLoading, setQuotaExceeded } = useAuth();
   const { showToast } = useToast();
-  const { forklifts, refreshGlobalData } = useData();
-  const [activeStops, setActiveStops] = useState<MaintenanceStop[]>([]);
+  const { forklifts, activeStops, refreshGlobalData, loading: dataLoading } = useData();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [, setTick] = useState(0);
 
@@ -36,65 +35,73 @@ export function ActiveMachinesView() {
     return () => clearInterval(timer);
   }, []);
 
-  const fetchData = async (force = false) => {
-    if (!profile) return;
-    setIsRefreshing(true);
-
-    // 1. Try Loading from Cache
-    const CACHE_KEY = 'active_machines_maintenance_cache';
-    if (!force) {
-      const cached = localStorage.getItem(CACHE_KEY);
-      if (cached) {
-        try {
-          const { data, timestamp } = JSON.parse(cached);
-          const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-          if (Date.now() - timestamp < CACHE_DURATION) {
-            setActiveStops(data);
-            setIsRefreshing(false);
-            return;
-          }
-        } catch (e) {
-          localStorage.removeItem(CACHE_KEY);
-        }
-      }
-    }
-
-    try {
-      await refreshGlobalData(force);
-      const qS = query(
-        collection(db, 'maintenance'), 
-        where('status', '!=', 'completed'),
-        limit(100)
-      );
-      const snapshot = await getDocs(qS);
-      const newStops = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as MaintenanceStop));
-      setActiveStops(newStops);
-
-      // Update Cache
-      localStorage.setItem(CACHE_KEY, JSON.stringify({
-        data: newStops,
-        timestamp: Date.now()
-      }));
-    } catch (error: any) {
-      if (error?.code === 'resource-exhausted' || error?.message?.includes('Quota exceeded')) {
-        setQuotaExceeded(true);
-      }
-      handleFirestoreError(error, OperationType.LIST, 'maintenance');
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
   useEffect(() => {
     if (!authLoading && profile) {
-      fetchData();
+      refreshGlobalData();
     }
   }, [authLoading, profile]);
 
-  const handleRefresh = () => fetchData(true);
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await refreshGlobalData(true);
+    setIsRefreshing(false);
+  };
+
+  const consolidatedForklifts = React.useMemo(() => {
+    // Determine which machines have active maintenance occurrences
+    const machineStatusMap = new Map<string, ForkliftStatus>();
+    activeStops.forEach(stop => {
+      const f = forklifts.find(fork => fork.id === stop.forkliftId);
+      if (f?.serialNumber) {
+        const serial = f.serialNumber.trim().toLowerCase();
+        const severity = stop.severity || 'high';
+        const targetStatus: ForkliftStatus = severity === 'high' ? 'stopped' : 'maintenance';
+        
+        const existingStatus = machineStatusMap.get(serial);
+        if (!existingStatus || (existingStatus === 'maintenance' && targetStatus === 'stopped')) {
+          machineStatusMap.set(serial, targetStatus);
+        }
+      }
+    });
+
+    const fleetMap = new Map<string, Forklift>();
+    
+    // Sort by createdAt descending
+    const sorted = [...forklifts].sort((a, b) => {
+      const dateA = (a as any).createdAt || '';
+      const dateB = (b as any).createdAt || '';
+      return dateB.localeCompare(dateA);
+    });
+
+    sorted.forEach(f => {
+      const serial = (f.serialNumber || '').trim().toLowerCase();
+      const key = serial || f.id;
+      
+      if (!fleetMap.has(key)) {
+        const enriched = { ...f };
+        const activeStatus = serial ? machineStatusMap.get(serial) : null;
+        
+        if (activeStatus) {
+          enriched.status = activeStatus;
+        } else if (enriched.status === 'stopped' || enriched.status === 'maintenance') {
+          // If no active occurrence, it must be operational
+          enriched.status = 'available';
+        }
+        fleetMap.set(key, enriched);
+      }
+    });
+
+    return fleetMap;
+  }, [forklifts, activeStops]);
 
   function renderOccurrenceCard(stop: MaintenanceStop) {
-    const forklift = forklifts.find(f => f.id === stop.forkliftId);
+    // First try finding the specific machine by ID
+    const directForklift = forklifts.find(f => f.id === stop.forkliftId);
+    
+    // Then get the consolidated version using serial number (or ID as fallback)
+    const key = (directForklift?.serialNumber || '').trim().toLowerCase() || stop.forkliftId;
+    const forklift = consolidatedForklifts.get(key) || directForklift;
+    
     const isCritical = stop.severity === 'high';
     const isMedium = stop.severity === 'medium';
     const isAwaitingParts = stop.status === 'awaiting_parts';

@@ -19,7 +19,7 @@ import {
 import { db } from '../firebase';
 import { useAuth } from './Auth';
 import { useData } from './DataContext';
-import { Checklist, Forklift, MaintenanceStop, UserProfile, OperationalEvent, OperationType, LowProductionReason, EventAction, ShiftReport, OperationGoal, ShiftType } from '../types';
+import { Checklist, Forklift, MaintenanceStop, UserProfile, OperationalEvent, OperationType as AppOperationType, LowProductionReason, EventAction, ShiftReport, OperationGoal, ShiftType, ForkliftStatus } from '../types';
 import { handleFirestoreError, OperationType as FirestoreOp } from '../lib/firebaseErrorHandler';
 import { 
   BarChart, 
@@ -46,7 +46,7 @@ const COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#10b981', '#8b5cf6', '#ec4899'
 
 export function ManagerDashboard() {
   const { profile, loading: authLoading, setQuotaExceeded } = useAuth();
-  const { forklifts, goals: operationGoals, refreshGlobalData } = useData();
+  const { forklifts, activeStops, goals: operationGoals, refreshGlobalData } = useData();
   const [checklists, setChecklists] = useState<Checklist[]>([]);
   const [maintenanceHistory, setMaintenanceHistory] = useState<MaintenanceStop[]>([]);
   const [operationalEvents, setOperationalEvents] = useState<OperationalEvent[]>([]);
@@ -55,7 +55,7 @@ export function ManagerDashboard() {
   const [hasMoreEvents, setHasMoreEvents] = useState(true);
   
   const [showGoalModal, setShowGoalModal] = useState(false);
-  const [editingGoal, setEditingGoal] = useState<{operationType: OperationType, shift: '1' | '2', value: string} | null>(null);
+  const [editingGoal, setEditingGoal] = useState<{operationType: AppOperationType, shift: '1' | '2', value: string} | null>(null);
   
   const [filterYear, setFilterYear] = useState<string>(new Date().getFullYear().toString());
   const [filterMonth, setFilterMonth] = useState<string>('all');
@@ -217,16 +217,51 @@ export function ManagerDashboard() {
   };
 
   const uniqueForklifts = useMemo(() => {
-    const fleetMap = new Map<string, Forklift>();
-    forklifts.forEach(f => {
-      const existing = fleetMap.get(f.serialNumber);
-      // Prefer available or more complete records if duplicates exist
-      if (!existing || (existing.status !== 'available' && f.status === 'available')) {
-        fleetMap.set(f.serialNumber, f);
+    // Determine which machines have active maintenance occurrences
+    const machineStatusMap = new Map<string, ForkliftStatus>();
+    activeStops.forEach(stop => {
+      const f = forklifts.find(fork => fork.id === stop.forkliftId);
+      if (f?.serialNumber) {
+        const serial = f.serialNumber.trim().toLowerCase();
+        const severity = stop.severity || 'high';
+        const targetStatus: ForkliftStatus = severity === 'high' ? 'stopped' : 'maintenance';
+        
+        const existingStatus = machineStatusMap.get(serial);
+        if (!existingStatus || (existingStatus === 'maintenance' && targetStatus === 'stopped')) {
+          machineStatusMap.set(serial, targetStatus);
+        }
       }
     });
-    return Array.from(fleetMap.values()).sort((a, b) => a.serialNumber.localeCompare(b.serialNumber));
-  }, [forklifts]);
+
+    const fleetMap = new Map<string, Forklift>();
+    
+    // Deduplicate by serial using most recent createdAt
+    const sorted = [...forklifts].sort((a, b) => {
+      const dateA = (a as any).createdAt || '';
+      const dateB = (b as any).createdAt || '';
+      return dateB.localeCompare(dateA);
+    });
+
+    sorted.forEach(f => {
+      const serial = (f.serialNumber || '').trim().toLowerCase();
+      const key = serial || f.id;
+      
+      if (!fleetMap.has(key)) {
+        const enriched = { ...f };
+        const activeStatus = serial ? machineStatusMap.get(serial) : null;
+        
+        if (activeStatus) {
+          enriched.status = activeStatus;
+        } else if (enriched.status === 'stopped' || enriched.status === 'maintenance') {
+          // If no active occurrence, it must be operational
+          enriched.status = 'available';
+        }
+        fleetMap.set(key, enriched);
+      }
+    });
+
+    return Array.from(fleetMap.values()).sort((a, b) => (a.serialNumber || '').localeCompare(b.serialNumber || ''));
+  }, [forklifts, activeStops]);
 
   const filteredChecklists = useMemo(() => {
     return checklists.filter(cl => {
@@ -1014,7 +1049,7 @@ export function ManagerDashboard() {
                             ) : (
                               <div className="flex gap-2">
                                 <button 
-                                  onClick={() => setEditingGoal({ operationType: type as OperationType, shift: shift as any, value: existingGoal?.goal?.toString() || '' })}
+                                  onClick={() => setEditingGoal({ operationType: type as AppOperationType, shift: shift as any, value: existingGoal?.goal?.toString() || '' })}
                                   className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-black text-slate-700 flex justify-between items-center hover:border-blue-300 transition-all group"
                                 >
                                   <span>{existingGoal?.goal || 'Não definido'} <span className="text-[10px] text-slate-400 font-bold ml-1">Fardos Total</span></span>

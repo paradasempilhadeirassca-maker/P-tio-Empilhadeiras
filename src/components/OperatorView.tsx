@@ -13,7 +13,7 @@ import { db } from '../firebase';
 import { useAuth } from './Auth';
 import { useData } from './DataContext';
 import { useToast } from './ToastContext';
-import { Forklift, MaintenanceStop } from '../types';
+import { Forklift, MaintenanceStop, ForkliftStatus } from '../types';
 import { AlertCircle, Clock, CheckCircle2, Play, Loader2, AlertTriangle, Ban, Info, Wrench, History } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/firebaseUtils';
@@ -26,68 +26,14 @@ interface OperatorViewProps {
 export function OperatorView({ mode = 'full' }: OperatorViewProps) {
   const { profile, setQuotaExceeded } = useAuth();
   const { showToast } = useToast();
-  const { forklifts, refreshGlobalData } = useData();
-  const [activeStops, setActiveStops] = useState<MaintenanceStop[]>([]);
+  const { forklifts, activeStops, refreshGlobalData } = useData();
   const [selectedForklift, setSelectedForklift] = useState<string>('');
   const [description, setDescription] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [severity, setSeverity] = useState<'low' | 'medium' | 'high'>('high');
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const fetchData = async (force = false) => {
-    setIsRefreshing(true);
-
-    // 1. Try Loading from Cache
-    const CACHE_KEY = 'operator_view_maintenance_cache';
-    if (!force) {
-      const cached = localStorage.getItem(CACHE_KEY);
-      if (cached) {
-        try {
-          const { data, timestamp } = JSON.parse(cached);
-          const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-          if (Date.now() - timestamp < CACHE_DURATION) {
-            setActiveStops(data);
-            setIsRefreshing(false);
-            return;
-          }
-        } catch (e) {
-          localStorage.removeItem(CACHE_KEY);
-        }
-      }
-    }
-
-    try {
-      await refreshGlobalData(force);
-
-      const qS = query(
-        collection(db, 'maintenance'), 
-        where('status', '!=', 'completed'),
-        limit(100)
-      );
-      const sSnap = await getDocs(qS);
-      const newStops = sSnap.docs.map(d => ({ id: d.id, ...d.data() } as MaintenanceStop));
-      setActiveStops(newStops);
-
-      // Update Cache
-      localStorage.setItem(CACHE_KEY, JSON.stringify({
-        data: newStops,
-        timestamp: Date.now()
-      }));
-    } catch (error: any) {
-      if (error?.code === 'resource-exhausted' || error?.message?.includes('Quota exceeded')) {
-        setQuotaExceeded(true);
-      }
-      console.warn("Quota or fetching error in OperatorView:", error);
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchData();
-  }, [setQuotaExceeded]);
-
-  const handleRefresh = () => fetchData(true);
+  const handleRefresh = () => refreshGlobalData(true);
 
   // Pre-select assigned forklift
   useEffect(() => {
@@ -103,8 +49,8 @@ export function OperatorView({ mode = 'full' }: OperatorViewProps) {
     e.preventDefault();
     if (!selectedForklift || !profile) return;
 
-    const forklift = forklifts.find(f => f.id === selectedForklift);
-    if (forklift && forklift.status === 'stopped') {
+    const isActiveStop = activeStops.some(s => s.forkliftId === selectedForklift);
+    if (isActiveStop) {
       showToast('Esta máquina está em PARADA CRÍTICA. Não é possível registrar novas ocorrências até o reparo.', 'error');
       return;
     }
@@ -238,17 +184,54 @@ export function OperatorView({ mode = 'full' }: OperatorViewProps) {
   };
 
   const fleetList = useMemo(() => {
-    const fleetMap = new Map<string, Forklift>();
-    forklifts.forEach(f => {
-      const existing = fleetMap.get(f.serialNumber);
-      // Keep only one instance per serial number, preferring available status if duplicates exist
-      if (!existing || (existing.status !== 'available' && f.status === 'available')) {
-        fleetMap.set(f.serialNumber, f);
+    // Determine which machines have active maintenance occurrences
+    const machineStatusMap = new Map<string, ForkliftStatus>();
+    activeStops.forEach(stop => {
+      const f = forklifts.find(fork => fork.id === stop.forkliftId);
+      if (f?.serialNumber) {
+        const serial = f.serialNumber.trim().toLowerCase();
+        const severity = stop.severity || 'high';
+        const targetStatus: ForkliftStatus = severity === 'high' ? 'stopped' : 'maintenance';
+        
+        const existingStatus = machineStatusMap.get(serial);
+        if (!existingStatus || (existingStatus === 'maintenance' && targetStatus === 'stopped')) {
+          machineStatusMap.set(serial, targetStatus);
+        }
       }
     });
+
+    const fleetMap = new Map<string, Forklift>();
+    
+    // Most recent machine record wins for parameters like model, but status is overridden by active stops
+    const sortedForklifts = [...forklifts].sort((a, b) => {
+      const dateA = (a as any).createdAt || '';
+      const dateB = (b as any).createdAt || '';
+      return dateB.localeCompare(dateA);
+    });
+
+    sortedForklifts.forEach(f => {
+      const serial = (f.serialNumber || '').trim().toLowerCase();
+      const key = serial || f.id;
+      
+      if (!fleetMap.has(key)) {
+        const enriched = { ...f };
+        const activeStatus = serial ? machineStatusMap.get(serial) : null;
+        
+        if (activeStatus) {
+          enriched.status = activeStatus;
+        } else if (enriched.status === 'stopped' || enriched.status === 'maintenance') {
+          // If no active occurrence, it must be operational
+          enriched.status = 'available';
+        }
+        fleetMap.set(key, enriched);
+      }
+    });
+
+    // We only want machines that are actually operational
     return Array.from(fleetMap.values())
-      .sort((a, b) => a.serialNumber.localeCompare(b.serialNumber));
-  }, [forklifts]);
+      .filter(f => f.status !== 'stopped' && f.status !== 'maintenance')
+      .sort((a, b) => (a.serialNumber || '').localeCompare(b.serialNumber || ''));
+  }, [forklifts, activeStops]);
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-8">

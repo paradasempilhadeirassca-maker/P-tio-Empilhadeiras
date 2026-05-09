@@ -64,9 +64,8 @@ import { handleFirestoreError, OperationType as FirestoreOperationType } from '.
 export function LeaderView() {
   const { profile, loading: authLoading, setQuotaExceeded } = useAuth();
   const { showToast } = useToast();
-  const { forklifts, operators, refreshGlobalData } = useData();
+  const { forklifts, operators, activeStops, refreshGlobalData } = useData();
   const [events, setEvents] = useState<OperationalEvent[]>([]);
-  const [activeStops, setActiveStops] = useState<MaintenanceStop[]>([]);
   
   const [selectedForkliftId, setSelectedForkliftId] = useState<string>('');
   const [selectedOperatorIds, setSelectedOperatorIds] = useState<string[]>([]);
@@ -98,16 +97,54 @@ export function LeaderView() {
 
   // Derived state: find the last event for the selected forklift to know its current status
   const uniqueForklifts = useMemo(() => {
-    const fleetMap = new Map<string, Forklift>();
-    forklifts.forEach(f => {
-      const existing = fleetMap.get(f.serialNumber);
-      // Keep only one instance per serial number, preferring available status if duplicates exist
-      if (!existing || (existing.status !== 'available' && f.status === 'available')) {
-        fleetMap.set(f.serialNumber, f);
+    // Identify machines with active maintenance occurrences
+    const machineStatusMap = new Map<string, ForkliftStatus>();
+    activeStops.forEach(stop => {
+      const f = forklifts.find(fork => fork.id === stop.forkliftId);
+      if (f?.serialNumber) {
+        const serial = f.serialNumber.trim().toLowerCase();
+        const severity = stop.severity || 'high';
+        const targetStatus: ForkliftStatus = severity === 'high' ? 'stopped' : 'maintenance';
+        
+        const existingStatus = machineStatusMap.get(serial);
+        if (!existingStatus || (existingStatus === 'maintenance' && targetStatus === 'stopped')) {
+          machineStatusMap.set(serial, targetStatus);
+        }
       }
     });
-    return Array.from(fleetMap.values()).sort((a, b) => a.serialNumber.localeCompare(b.serialNumber));
-  }, [forklifts]);
+
+    const fleetMap = new Map<string, Forklift>();
+    
+    // Sort by createdAt descending to pick the most recent record for each serial number
+    const sortedForklifts = [...forklifts].sort((a, b) => {
+      const dateA = (a as any).createdAt || '';
+      const dateB = (b as any).createdAt || '';
+      return dateB.localeCompare(dateA);
+    });
+
+    sortedForklifts.forEach(f => {
+      const serial = (f.serialNumber || '').trim().toLowerCase();
+      const key = serial || f.id;
+      
+      if (!fleetMap.has(key)) {
+        const enriched = { ...f };
+        const activeStatus = serial ? machineStatusMap.get(serial) : null;
+        
+        if (activeStatus) {
+          enriched.status = activeStatus;
+        } else if (enriched.status === 'stopped' || enriched.status === 'maintenance') {
+          // If no active occurrence, it must be operational
+          enriched.status = 'available';
+        }
+        fleetMap.set(key, enriched);
+      }
+    });
+
+    // Machines in maintenance/stopped shouldn't be selectable for operations
+    return Array.from(fleetMap.values())
+      .filter(f => f.status !== 'stopped' && f.status !== 'maintenance')
+      .sort((a, b) => (a.serialNumber || '').localeCompare(b.serialNumber || ''));
+  }, [forklifts, activeStops]);
 
   const uniqueOperators = useMemo(() => {
     const nameMap = new Map<string, UserProfile>();
@@ -261,27 +298,19 @@ export function LeaderView() {
     const E_CACHE_KEY = 'leader_events_cache';
     const S_CACHE_KEY = 'leader_stops_cache';
 
-    if (!force) {
-      const cachedE = localStorage.getItem(E_CACHE_KEY);
-      const cachedS = localStorage.getItem(S_CACHE_KEY);
-      if (cachedE && cachedS) {
-        try {
-          const eData = JSON.parse(cachedE);
-          const sData = JSON.parse(cachedS);
-          const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-          if (Date.now() - eData.timestamp < CACHE_DURATION) {
-            setEvents(eData.data);
-            setActiveStops(sData.data);
-            setIsRefreshing(false);
-            return;
-          }
-        } catch (e) {
-          localStorage.removeItem(E_CACHE_KEY);
-          localStorage.removeItem(S_CACHE_KEY);
+    const CACHE_KEY = S_CACHE_KEY;
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (!force && cached) {
+      try {
+        const { data, timestamp } = JSON.parse(cached);
+        const CACHE_DURATION = 5 * 60 * 1000;
+        if (Date.now() - timestamp < CACHE_DURATION) {
+          setIsRefreshing(false);
+          return;
         }
-      }
+      } catch (e) {}
     }
-
+    
     try {
       await refreshGlobalData(force);
 
@@ -290,12 +319,6 @@ export function LeaderView() {
       const newEvents = eSnap.docs.map(d => ({ id: d.id, ...d.data() } as OperationalEvent));
       setEvents(newEvents);
       localStorage.setItem(E_CACHE_KEY, JSON.stringify({ data: newEvents, timestamp: Date.now() }));
-
-      const qS = query(collection(db, 'maintenance'), where('status', '!=', 'completed'), limit(100));
-      const sSnap = await getDocs(qS);
-      const newStops = sSnap.docs.map(d => ({ id: d.id, ...d.data() } as MaintenanceStop));
-      setActiveStops(newStops);
-      localStorage.setItem(S_CACHE_KEY, JSON.stringify({ data: newStops, timestamp: Date.now() }));
 
       // Shift finalized check
       if (selectedForkliftId) {
@@ -340,19 +363,8 @@ export function LeaderView() {
       }
     });
 
-    // Listen for maintenance stops in real-time
-    const qS = query(collection(db, 'maintenance'), where('status', '!=', 'completed'), limit(100));
-    const unsubscribeS = onSnapshot(qS, (snapshot) => {
-      const newStops = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as MaintenanceStop));
-      setActiveStops(newStops);
-      localStorage.setItem('leader_stops_cache', JSON.stringify({ data: newStops, timestamp: Date.now() }));
-    }, (err: any) => {
-      console.error("Maint Realtime Error:", err);
-    });
-
     return () => {
       unsubscribeE();
-      unsubscribeS();
     };
   }, [authLoading, profile, setQuotaExceeded]);
 

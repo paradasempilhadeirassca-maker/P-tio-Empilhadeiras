@@ -14,7 +14,7 @@ import { db } from '../firebase';
 import { useAuth } from './Auth';
 import { useData } from './DataContext';
 import { useToast } from './ToastContext';
-import { Forklift, Checklist, ChecklistItem, ShiftType } from '../types';
+import { Forklift, Checklist, ChecklistItem, ShiftType, ForkliftStatus } from '../types';
 import { ClipboardCheck, CheckCircle2, XCircle, Loader2, History, ArrowLeft, Sun, Moon } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { sendWhatsAppNotification, sendLocalNotification } from '../lib/notifications';
@@ -36,7 +36,7 @@ const DEFAULT_ITEMS = [
 export function ChecklistView() {
   const { profile, loading: authLoading, setQuotaExceeded } = useAuth();
   const { showToast } = useToast();
-  const { forklifts } = useData();
+  const { forklifts, activeStops } = useData();
   const [checklists, setChecklists] = useState<Checklist[]>([]);
   const [selectedForklift, setSelectedForklift] = useState<string>('');
   const [items, setItems] = useState<ChecklistItem[]>(
@@ -128,16 +128,54 @@ export function ChecklistView() {
   }, [selectedForklift, setQuotaExceeded]); // Strictly on selection change
 
   const uniqueForklifts = useMemo(() => {
-    const fleetMap = new Map<string, Forklift>();
-    forklifts.forEach(f => {
-      const existing = fleetMap.get(f.serialNumber);
-      // Prefer the one that is available if there are duplicates
-      if (!existing || (existing.status !== 'available' && f.status === 'available')) {
-        fleetMap.set(f.serialNumber, f);
+    // Determine which machines have active maintenance occurrences
+    const machineStatusMap = new Map<string, ForkliftStatus>();
+    activeStops.forEach(stop => {
+      const f = forklifts.find(fork => fork.id === stop.forkliftId);
+      if (f?.serialNumber) {
+        const serial = f.serialNumber.trim().toLowerCase();
+        const severity = stop.severity || 'high';
+        const targetStatus: ForkliftStatus = severity === 'high' ? 'stopped' : 'maintenance';
+        
+        const existingStatus = machineStatusMap.get(serial);
+        if (!existingStatus || (existingStatus === 'maintenance' && targetStatus === 'stopped')) {
+          machineStatusMap.set(serial, targetStatus);
+        }
       }
     });
-    return Array.from(fleetMap.values()).sort((a, b) => a.serialNumber.localeCompare(b.serialNumber));
-  }, [forklifts]);
+
+    const fleetMap = new Map<string, Forklift>();
+    
+    // Deduplicate by serial, using most recent createdAt
+    const sorted = [...forklifts].sort((a, b) => {
+      const dateA = (a as any).createdAt || '';
+      const dateB = (b as any).createdAt || '';
+      return dateB.localeCompare(dateA);
+    });
+
+    sorted.forEach(f => {
+      const serial = (f.serialNumber || '').trim().toLowerCase();
+      const key = serial || f.id;
+      
+      if (!fleetMap.has(key)) {
+        const enriched = { ...f };
+        const activeStatus = serial ? machineStatusMap.get(serial) : null;
+        
+        if (activeStatus) {
+          enriched.status = activeStatus;
+        } else if (enriched.status === 'stopped' || enriched.status === 'maintenance') {
+          // If no active occurrence, it must be operational
+          enriched.status = 'available';
+        }
+        fleetMap.set(key, enriched);
+      }
+    });
+
+    // Operators shouldn't do checklists for stopped machines
+    return Array.from(fleetMap.values())
+      .filter(f => f.status !== 'stopped' && f.status !== 'maintenance')
+      .sort((a, b) => (a.serialNumber || '').localeCompare(b.serialNumber || ''));
+  }, [forklifts, activeStops]);
 
   const filteredForklifts = useMemo(() => {
     return uniqueForklifts.filter(f => 

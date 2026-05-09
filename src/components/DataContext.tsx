@@ -6,19 +6,21 @@ import {
   orderBy, 
   limit, 
   where,
+  onSnapshot,
   DocumentData,
   QueryDocumentSnapshot
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Forklift, UserProfile, OperationGoal } from '../types';
+import { Forklift, UserProfile, OperationGoal, MaintenanceStop } from '../types';
 import { useAuth } from './Auth';
 
 interface DataContextType {
   forklifts: Forklift[];
   operators: UserProfile[];
   goals: OperationGoal[];
+  activeStops: MaintenanceStop[];
   loading: boolean;
-  refreshGlobalData: () => Promise<void>;
+  refreshGlobalData: (force?: boolean) => Promise<void>;
   quotaExceeded: boolean;
   setQuotaExceeded: (val: boolean) => void;
 }
@@ -32,6 +34,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [forklifts, setForklifts] = useState<Forklift[]>([]);
   const [operators, setOperators] = useState<UserProfile[]>([]);
   const [goals, setGoals] = useState<OperationGoal[]>([]);
+  const [activeStops, setActiveStops] = useState<MaintenanceStop[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchGlobalData = useCallback(async (force = false) => {
@@ -44,11 +47,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       const cached = localStorage.getItem(CACHE_KEY);
       if (cached) {
         try {
-          const { forklifts: f, operators: o, goals: g, timestamp } = JSON.parse(cached);
+          const { forklifts: f, operators: o, goals: g, activeStops: a, timestamp } = JSON.parse(cached);
           if (Date.now() - timestamp < CACHE_DURATION) {
             setForklifts(f);
             setOperators(o);
             setGoals(g);
+            setActiveStops(a || []);
             setLoading(false);
             console.log("Dados globais carregados do cache (0 leituras)");
             return;
@@ -65,11 +69,25 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       // Forklifts (Máquinas)
       let fData: Forklift[] = [];
       try {
-        const fSnap = await getDocs(query(collection(db, 'forklifts'), limit(100)));
+        const fSnap = await getDocs(query(collection(db, 'forklifts'), limit(150)));
         fData = fSnap.docs.map(d => ({ id: d.id, ...d.data() } as Forklift));
         setForklifts(fData);
       } catch (err) {
         console.error("Error fetching forklifts:", err);
+      }
+
+      // Active Maintenance Stops (Ocorrências Ativas)
+      let aData: MaintenanceStop[] = [];
+      try {
+        const aSnap = await getDocs(query(
+          collection(db, 'maintenance'), 
+          where('status', '!=', 'completed'),
+          limit(100)
+        ));
+        aData = aSnap.docs.map(d => ({ id: d.id, ...d.data() } as MaintenanceStop));
+        setActiveStops(aData);
+      } catch (err) {
+        console.error("Error fetching active stops:", err);
       }
 
       // Operators
@@ -97,6 +115,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         forklifts: fData,
         operators: oData,
         goals: gData,
+        activeStops: aData,
         timestamp: Date.now()
       }));
 
@@ -113,6 +132,33 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!authLoading && user) {
       fetchGlobalData();
+
+      // Realtime listener for active maintenance stops
+      const q = query(
+        collection(db, 'maintenance'), 
+        where('status', '!=', 'completed'),
+        limit(150)
+      );
+      
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const stops = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as MaintenanceStop));
+        setActiveStops(stops);
+        
+        // Also update cache for consistency on reload
+        const cached = localStorage.getItem(CACHE_KEYS.GLOBAL_DATA);
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            parsed.activeStops = stops;
+            parsed.timestamp = Date.now();
+            localStorage.setItem(CACHE_KEYS.GLOBAL_DATA, JSON.stringify(parsed));
+          } catch(e) {}
+        }
+      }, (err) => {
+        console.error("Realtime stops error:", err);
+      });
+
+      return () => unsubscribe();
     } else if (!authLoading && !user) {
       setLoading(false);
     }
@@ -123,6 +169,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       forklifts, 
       operators, 
       goals, 
+      activeStops,
       loading, 
       refreshGlobalData: fetchGlobalData,
       quotaExceeded,

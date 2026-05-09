@@ -9,7 +9,7 @@ import {
   serverTimestamp 
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Forklift, ForkliftType, ChecklistItem, PreventiveMaintenanceExecution } from '../types';
+import { Forklift, ForkliftType, ChecklistItem, PreventiveMaintenanceExecution, ForkliftStatus } from '../types';
 import { useAuth } from './Auth';
 import { useData } from './DataContext';
 import { 
@@ -39,7 +39,7 @@ import { getMaintenanceStatus, getPreventiveChecklist, getNextMaintenanceType } 
 
 export function PreventiveView() {
   const { profile, setQuotaExceeded } = useAuth();
-  const { forklifts: globalForklifts, refreshGlobalData } = useData();
+  const { forklifts: globalForklifts, activeStops, refreshGlobalData } = useData();
   const [forklifts, setForklifts] = useState<Forklift[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<ForkliftType | 'all'>('all');
@@ -55,18 +55,50 @@ export function PreventiveView() {
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
 
   const processForklifts = (allForklifts: Forklift[]) => {
-    // Consolidação por Número de Série para evitar duplicatas físicas
-    const fleetMap = new Map<string, Forklift>();
-    allForklifts.forEach(f => {
-      const serial = (f.serialNumber || '').trim().toLowerCase();
-      if (!serial) return;
-      
-      const existing = fleetMap.get(serial);
-      // Regra de desempate: preferir a que tiver horímetro mais recente ou status disponível
-      if (!existing || (existing.status !== 'available' && f.status === 'available')) {
-        fleetMap.set(serial, f);
+    // Identify machines with active maintenance occurrences
+    const machineStatusMap = new Map<string, ForkliftStatus>();
+    activeStops.forEach(stop => {
+      const f = allForklifts.find(fork => fork.id === stop.forkliftId);
+      if (f?.serialNumber) {
+        const serial = f.serialNumber.trim().toLowerCase();
+        const severity = stop.severity || 'high';
+        const targetStatus: ForkliftStatus = severity === 'high' ? 'stopped' : 'maintenance';
+        
+        const existingStatus = machineStatusMap.get(serial);
+        if (!existingStatus || (existingStatus === 'maintenance' && targetStatus === 'stopped')) {
+          machineStatusMap.set(serial, targetStatus);
+        }
       }
     });
+
+    // Consolidação por Número de Série para evitar duplicatas físicas
+    const fleetMap = new Map<string, Forklift>();
+    
+    // Sort by createdAt descending
+    const sorted = [...allForklifts].sort((a, b) => {
+      const dateA = (a as any).createdAt || '';
+      const dateB = (b as any).createdAt || '';
+      return dateB.localeCompare(dateA);
+    });
+
+    sorted.forEach(f => {
+      const serial = (f.serialNumber || '').trim().toLowerCase();
+      const key = serial || f.id;
+      
+      if (!fleetMap.has(key)) {
+        const enriched = { ...f };
+        const activeStatus = serial ? machineStatusMap.get(serial) : null;
+        
+        if (activeStatus) {
+          enriched.status = activeStatus;
+        } else if (enriched.status === 'stopped' || enriched.status === 'maintenance') {
+          // If no active occurrence, it must be operational
+          enriched.status = 'available';
+        }
+        fleetMap.set(key, enriched);
+      }
+    });
+
     setForklifts(Array.from(fleetMap.values()));
   };
 
