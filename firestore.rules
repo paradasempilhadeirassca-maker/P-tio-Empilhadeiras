@@ -1,0 +1,182 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default Deny Catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ===============================================================
+    // Global Helpers
+    // ===============================================================
+    
+    function isSignedIn() { 
+      return request.auth != null; 
+    }
+    
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function userRole() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? userDoc().role
+        : 'none';
+    }
+    
+    function isRole(role) { 
+      return userRole() == role;
+    }
+    
+    function isManager() { return isRole('manager'); }
+    function isLeader() { return isRole('leader'); }
+    function isMechanic() { return isRole('mechanic'); }
+    function isOperator() { return isRole('operator'); }
+
+    function isValidId(id) { 
+      return id is string && id.size() <= 64 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // ===============================================================
+    // Validation Blueprints
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role', 'createdAt']) &&
+             data.keys().size() >= 4 && data.keys().size() <= 6 &&
+             data.uid == request.auth.uid &&
+             data.email is string && data.email.size() <= 128 &&
+             data.role in ['operator', 'leader', 'mechanic', 'manager'] &&
+             data.createdAt is string;
+    }
+
+    function isValidForklift(data) {
+      return data.keys().hasAll(['model', 'serialNumber', 'type', 'status']) &&
+             data.model is string && data.model.size() <= 100 &&
+             data.serialNumber is string && data.serialNumber.size() <= 64 &&
+             data.type in ['empilhadeira', 'manipulador'] &&
+             data.status in ['available', 'stopped', 'maintenance', 'at_risk'];
+    }
+
+    function isValidOperationalEvent(data) {
+      return data.keys().hasAll(['forkliftId', 'operatorIds', 'operatorNames', 'operationType', 'action', 'timestamp', 'shift', 'leaderId']) &&
+             data.action in ['start', 'change', 'stop', 'resume', 'occurrence', 'consolidation'] &&
+             data.leaderId == request.auth.uid &&
+             isValidId(data.forkliftId) &&
+             data.operatorIds is list && data.operatorIds.size() <= 5 &&
+             data.operatorNames is list && data.operatorNames.size() <= 5 &&
+             data.timestamp is string &&
+             data.shift in ['1', '2'] &&
+             (!('production' in data) || data.production is number) &&
+             (!('stopReason' in data) || data.stopReason is string && data.stopReason.size() <= 50);
+    }
+
+    function isValidMaintenance(data) {
+      return data.keys().hasAll(['forkliftId', 'type', 'status', 'stopTime', 'operatorIds', 'operatorNames']) &&
+             data.status in ['pending', 'in_progress', 'awaiting_parts', 'completed'] &&
+             data.type in ['corrective', 'preventive'] &&
+             isValidId(data.forkliftId) &&
+             data.operatorIds is list && data.operatorIds.size() <= 5 &&
+             data.stopTime is string;
+    }
+
+    function isValidInventoryPart(data) {
+      return data.keys().hasAll(['name', 'quantity', 'minQuantity', 'unit', 'lastUpdated']) &&
+             data.name is string && data.name.size() <= 100 &&
+             data.quantity is number &&
+             data.minQuantity is number &&
+             data.unit is string && data.unit.size() <= 20;
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && userId == request.auth.uid && isValidUser(incoming());
+      allow update: if isSignedIn() && (
+        (userId == request.auth.uid && incoming().role == existing().role && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'password'])) ||
+        isManager()
+      );
+    }
+
+    match /forklifts/{forkliftId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isManager() && isValidId(forkliftId);
+      allow update: if isSignedIn() && isValidId(forkliftId) && (
+        isManager() || 
+        (
+          // Action: Status/Update (Mecânico ou Líder)
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'lastHourMeter', 'lastMaintenance', 'nextPreventiveHorometer', 
+            'lastPreventiveHorometer', 'lastHourMeterUpdate', 'lastUpdate'
+          ]) && (isLeader() || isMechanic() || isOperator())
+        )
+      );
+    }
+
+    match /maintenance/{recordId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (isOperator() || isLeader() || isManager()) && isValidMaintenance(incoming());
+      allow update: if isSignedIn() && (
+        isManager() ||
+        (isMechanic() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'startTime', 'endTime', 'mechanicId', 'repairNotes', 'parts', 'waitingPartsStartTime', 'totalWaitingPartsMinutes', 'pendingPartsList'])) ||
+        (isAwaitingPartsAction() && isMechanic())
+      );
+      allow delete: if isManager();
+      
+      function isAwaitingPartsAction() {
+        return incoming().status == 'awaiting_parts' && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'waitingPartsStartTime', 'pendingPartsList']);
+      }
+    }
+
+    match /operational_events/{eventId} {
+      allow read: if isSignedIn() && (isManager() || isLeader() || isMechanic());
+      allow create: if (isLeader() || isManager()) && isValidOperationalEvent(incoming()) && isValidId(incoming().forkliftId);
+      allow update, delete: if isManager();
+    }
+
+    match /checklists/{checklistId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (isOperator() || isLeader()) && incoming().operatorId == request.auth.uid;
+      allow update, delete: if isManager();
+    }
+
+    match /parts_inventory/{partId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isManager();
+      allow update: if isManager() || (isMechanic() && incoming().diff(existing()).affectedKeys().hasOnly(['quantity', 'lastUpdated']));
+    }
+
+    match /parts_inventory_history/{historyId} {
+      allow read: if isSignedIn();
+      allow create: if isManager() || isMechanic();
+      allow update, delete: if isManager();
+    }
+
+    match /shift_reports/{reportId} {
+      allow read: if isSignedIn() && (isManager() || isLeader());
+      allow create: if (isLeader() || isManager()) && incoming().leaderId == request.auth.uid;
+      allow update, delete: if isManager();
+    }
+
+    match /operation_goals/{goalId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isManager();
+    }
+
+    match /preventive_executions/{executionId} {
+      allow read: if isSignedIn();
+      allow create: if isMechanic() || isManager();
+      allow update, delete: if isManager();
+    }
+  }
+}

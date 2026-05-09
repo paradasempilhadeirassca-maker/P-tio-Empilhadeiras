@@ -1,0 +1,87 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User account information and roles.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["operator", "leader", "mechanic", "manager"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Forklift": {
+      "title": "Machine",
+      "description": "Machine data and status.",
+      "type": "object",
+      "properties": {
+        "model": { "type": "string" },
+        "serialNumber": { "type": "string" },
+        "type": { "type": "string", "enum": ["empilhadeira", "manipulador"] },
+        "status": { "type": "string", "enum": ["available", "stopped", "maintenance", "at_risk"] },
+        "lastHourMeter": { "type": "number" },
+        "lastHourMeterUpdate": { "type": "string", "format": "date-time" }
+      }
+    },
+    "OperationalEvent": {
+      "title": "Operational Event",
+      "description": "Log of machine activities and production.",
+      "type": "object",
+      "properties": {
+        "forkliftId": { "type": "string" },
+        "operatorIds": { "type": "array", "items": { "type": "string" } },
+        "operationType": { "type": "string" },
+        "action": { "type": "string" },
+        "production": { "type": "number" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "shift": { "type": "string", "enum": ["1", "2"] }
+      }
+    },
+    "MaintenanceStop": {
+      "title": "Maintenance Record",
+      "description": "Information about machine maintenance and repairs.",
+      "type": "object",
+      "properties": {
+        "forkliftId": { "type": "string" },
+        "status": { "type": "string" },
+        "type": { "type": "string" },
+        "stopTime": { "type": "string" }
+      }
+    },
+    "InventoryPart": {
+      "title": "Inventory Part",
+      "description": "Parts stock information.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "quantity": { "type": "number" },
+        "minQuantity": { "type": "number" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles."
+    },
+    "/forklifts/{forkliftId}": {
+      "schema": "Forklift",
+      "description": "Fleet machines."
+    },
+    "/operational_events/{eventId}": {
+      "schema": "OperationalEvent",
+      "description": "Activity logs."
+    },
+    "/maintenance/{recordId}": {
+      "schema": "MaintenanceStop",
+      "description": "Maintenance history."
+    },
+    "/parts_inventory/{partId}": {
+      "schema": "InventoryPart",
+      "description": "Spare parts stock."
+    }
+  }
+}
