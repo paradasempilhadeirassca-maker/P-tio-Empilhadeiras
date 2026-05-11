@@ -3,6 +3,7 @@ import * as Firestore from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from './Auth';
 import { useToast } from './ToastContext';
+import { useData } from './DataContext';
 import { Forklift, MaintenanceStop, Part, InventoryPart, OccurrenceSeverity } from '../types';
 import { 
   Wrench, 
@@ -52,6 +53,7 @@ import { CACHE_KEYS, CACHE_DURATION } from '../constants/cacheKeys';
 export function MechanicView() {
   const { profile, loading: authLoading, setQuotaExceeded } = useAuth();
   const { showToast } = useToast();
+  const { refreshGlobalData } = useData();
   const [forklifts, setForklifts] = useState<Forklift[]>([]);
   const [activeStops, setActiveStops] = useState<MaintenanceStop[]>([]);
   const [inventoryParts, setInventoryParts] = useState<InventoryPart[]>([]);
@@ -266,7 +268,8 @@ export function MechanicView() {
       batch.update(Firestore.doc(db, 'forklifts', stop.forkliftId), {
         status: 'available',
         lastMaintenance: endTime,
-        lastHourMeter: Number(hourMeter)
+        lastHourMeter: Number(hourMeter),
+        lastHourMeterUpdate: endTime
       });
 
       await batch.commit();
@@ -284,6 +287,7 @@ export function MechanicView() {
       localStorage.setItem(CACHE_KEYS.MAINTENANCE, JSON.stringify({ data: updatedStops, timestamp: Date.now() }));
       localStorage.setItem(CACHE_KEYS.FORKLIFTS, JSON.stringify({ data: updatedForklifts, timestamp: Date.now() }));
 
+      refreshGlobalData(true);
       showToast('Manutenção finalizada!');
       
       setSelectedStop(null);

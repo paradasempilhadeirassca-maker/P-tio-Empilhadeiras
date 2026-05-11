@@ -95,6 +95,15 @@ service cloud.firestore {
              data.unit is string && data.unit.size() <= 20;
     }
 
+    function isValidAbsence(data) {
+      return data.keys().hasAll(['operatorId', 'operatorName', 'startDate', 'endDate', 'reason']) &&
+             isValidId(data.operatorId) &&
+             data.operatorName is string && data.operatorName.size() <= 100 &&
+             data.startDate is string &&
+             data.endDate is string &&
+             data.reason is string && data.reason.size() <= 50;
+    }
+
     // ===============================================================
     // Collection Rules
     // ===============================================================
@@ -106,6 +115,12 @@ service cloud.firestore {
         (userId == request.auth.uid && incoming().role == existing().role && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'password'])) ||
         isManager()
       );
+    }
+
+    match /operator_absences/{absenceId} {
+      allow read: if isSignedIn();
+      allow create: if isManager() && isValidAbsence(incoming());
+      allow update, delete: if isManager();
     }
 
     match /forklifts/{forkliftId} {

@@ -31,7 +31,9 @@ import {
   Activity,
   ArrowRight,
   AlertTriangle,
-  Settings
+  Settings,
+  ShieldCheck,
+  Truck
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -39,8 +41,7 @@ import { getMaintenanceStatus, getPreventiveChecklist, getNextMaintenanceType } 
 
 export function PreventiveView() {
   const { profile, setQuotaExceeded } = useAuth();
-  const { forklifts: globalForklifts, activeStops, refreshGlobalData } = useData();
-  const [forklifts, setForklifts] = useState<Forklift[]>([]);
+  const { uniqueForklifts, activeStops, refreshGlobalData } = useData();
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<ForkliftType | 'all'>('all');
   const [filterStatus, setFilterStatus] = useState<string | 'all'>('all');
@@ -53,58 +54,6 @@ export function PreventiveView() {
   const [observations, setObservations] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
-
-  const processForklifts = (allForklifts: Forklift[]) => {
-    // Identify machines with active maintenance occurrences
-    const machineStatusMap = new Map<string, ForkliftStatus>();
-    activeStops.forEach(stop => {
-      const f = allForklifts.find(fork => fork.id === stop.forkliftId);
-      if (f?.serialNumber) {
-        const serial = f.serialNumber.trim().toLowerCase();
-        const severity = stop.severity || 'high';
-        const targetStatus: ForkliftStatus = severity === 'high' ? 'stopped' : 'maintenance';
-        
-        const existingStatus = machineStatusMap.get(serial);
-        if (!existingStatus || (existingStatus === 'maintenance' && targetStatus === 'stopped')) {
-          machineStatusMap.set(serial, targetStatus);
-        }
-      }
-    });
-
-    // Consolidação por Número de Série para evitar duplicatas físicas
-    const fleetMap = new Map<string, Forklift>();
-    
-    // Sort by createdAt descending
-    const sorted = [...allForklifts].sort((a, b) => {
-      const dateA = (a as any).createdAt || '';
-      const dateB = (b as any).createdAt || '';
-      return dateB.localeCompare(dateA);
-    });
-
-    sorted.forEach(f => {
-      const serial = (f.serialNumber || '').trim().toLowerCase();
-      const key = serial || f.id;
-      
-      if (!fleetMap.has(key)) {
-        const enriched = { ...f };
-        const activeStatus = serial ? machineStatusMap.get(serial) : null;
-        
-        if (activeStatus) {
-          enriched.status = activeStatus;
-        } else if (enriched.status === 'stopped' || enriched.status === 'maintenance') {
-          // If no active occurrence, it must be operational
-          enriched.status = 'available';
-        }
-        fleetMap.set(key, enriched);
-      }
-    });
-
-    setForklifts(Array.from(fleetMap.values()));
-  };
-
-  useEffect(() => {
-    processForklifts(globalForklifts);
-  }, [globalForklifts]);
 
   const fetchData = async () => {
     setIsRefreshing(true);
@@ -120,13 +69,13 @@ export function PreventiveView() {
   };
 
   const stats = useMemo(() => {
-    const total = forklifts.length;
+    const total = uniqueForklifts.length;
     let vencidas = 0;
     let proximas = 0;
     let emDia = 0;
     let desatualizadas = 0;
 
-    forklifts.forEach(f => {
+    uniqueForklifts.forEach(f => {
       const status = getMaintenanceStatus(f.lastHourMeter || 0, f.nextPreventiveHorometer || 0, f.lastHourMeterUpdate);
       if (status === 'vencida') vencidas++;
       else if (status === 'proxima') proximas++;
@@ -135,10 +84,10 @@ export function PreventiveView() {
     });
 
     return { total, vencidas, proximas, emDia, desatualizadas };
-  }, [forklifts]);
+  }, [uniqueForklifts]);
 
   const filteredForklifts = useMemo(() => {
-    return forklifts.filter(f => {
+    return uniqueForklifts.filter(f => {
       const matchesSearch = f.serialNumber.toLowerCase().includes(searchQuery.toLowerCase()) || 
                            f.model.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesType = filterType === 'all' || f.type === filterType;
@@ -154,7 +103,7 @@ export function PreventiveView() {
       const priority: Record<string, number> = { vencida: 0, desatualizado: 1, proxima: 2, em_dia: 3 };
       return (priority[statusA] ?? 4) - (priority[statusB] ?? 4);
     });
-  }, [forklifts, searchQuery, filterType, filterStatus]);
+  }, [uniqueForklifts, searchQuery, filterType, filterStatus]);
 
   useEffect(() => {
     if (selectedForklift) {
@@ -232,58 +181,92 @@ export function PreventiveView() {
   };
 
   return (
-    <div className="min-h-full bg-slate-50 flex flex-col">
+    <div className="min-h-full bg-slate-50/50 flex flex-col">
       {/* HEADER SECTION */}
-      <div className="bg-white border-b border-slate-200">
-        <div className="max-w-7xl mx-auto px-4 py-8">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+      <header className="bg-white border-b border-slate-200/60 sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto px-6 py-8">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-8">
+            <div className="space-y-1">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-slate-900 text-white rounded-2xl shadow-lg">
+                  <Wrench className="w-6 h-6" />
+                </div>
                 <div>
-                  <div className="flex items-center gap-3 mb-2">
-                    <button
-                      onClick={fetchData}
-                      disabled={isRefreshing}
-                      className={cn(
-                        "p-3 rounded-2xl border border-slate-200 transition-all active:scale-95 group",
-                        isRefreshing ? "bg-slate-50 text-slate-300" : "bg-white text-slate-600 hover:bg-slate-50 hover:border-blue-200 shadow-sm"
-                      )}
-                      title="Atualizar Dados"
-                    >
-                      <Activity className={cn("w-5 h-5 transition-transform duration-700", isRefreshing ? "animate-spin" : "group-hover:rotate-180")} />
-                    </button>
-                    <div>
-                      <h1 className="text-2xl font-black text-slate-900 tracking-tight uppercase">Plano Preventivo</h1>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] leading-none mt-1">Gestão de Máquinas e Equipamentos</p>
-                    </div>
-                  </div>
+                  <h1 className="text-3xl font-black text-slate-900 tracking-tight uppercase">Plano Preventivo</h1>
+                  <p className="text-slate-500 font-medium">Gestão técnica de periodicidade e revisões</p>
                 </div>
+              </div>
+            </div>
 
-            {/* DASHBOARD CARDS */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {[
-                { label: 'Total', value: stats.total, icon: Activity, color: 'text-slate-600', bg: 'bg-slate-50' },
-                { label: 'Vencidas', value: stats.vencidas, icon: AlertCircle, color: 'text-red-500', bg: 'bg-red-50', active: stats.vencidas > 0 },
-                { label: 'A Vencer', value: stats.proximas, icon: Clock, color: 'text-amber-500', bg: 'bg-amber-50' },
-                { label: 'Em Dia', value: stats.emDia, icon: CheckCircle2, color: 'text-emerald-500', bg: 'bg-emerald-50' }
-              ].map((stat, idx) => (
-                <div key={idx} className={cn(
-                  "px-4 py-3 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-center transition-all",
-                  stat.bg,
-                  stat.active ? "ring-2 ring-red-500/20" : ""
-                )}>
-                  <div className="flex items-center gap-2 mb-1">
-                    <stat.icon className={cn("w-3.5 h-3.5", stat.color)} />
-                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">{stat.label}</span>
-                  </div>
-                  <span className={cn("text-xl font-black tabular-nums", stat.color)}>{stat.value}</span>
-                </div>
-              ))}
+            {/* QUICK ACTIONS */}
+            <div className="flex items-center gap-3">
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={fetchData}
+                disabled={isRefreshing}
+                className={cn(
+                  "p-4 rounded-2xl border border-slate-200 transition-all flex items-center gap-3",
+                  isRefreshing ? "bg-slate-50 text-slate-300" : "bg-white text-slate-600 hover:border-blue-200 hover:bg-blue-50/50 shadow-sm"
+                )}
+              >
+                <Activity className={cn("w-5 h-5", isRefreshing && "animate-spin")} />
+                <span className="text-[10px] font-black uppercase tracking-widest hidden sm:inline">Sincronizar Dados</span>
+              </motion.button>
             </div>
           </div>
+          
+          {/* ANALYTICAL KPI's */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
+            {[
+              { label: 'Frota Total', value: stats.total, icon: Activity, color: 'blue' },
+              { label: 'Manut. Vencidas', value: stats.vencidas, icon: AlertCircle, color: 'red', alert: stats.vencidas > 0 },
+              { label: 'Proximas 50h', value: stats.proximas, icon: Clock, color: 'amber' },
+              { label: 'Saúde OK', value: stats.emDia, icon: ShieldCheck, color: 'emerald' }
+            ].map((stat, idx) => (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: idx * 0.1 }}
+                key={stat.label}
+                className={cn(
+                  "p-5 rounded-[2rem] border shadow-sm flex flex-col justify-between transition-all",
+                  stat.color === 'blue' ? "bg-blue-50/30 border-blue-100" :
+                  stat.color === 'red' ? "bg-red-50 border-red-200" :
+                  stat.color === 'amber' ? "bg-amber-50 border-amber-200" :
+                  "bg-emerald-50 border-emerald-200"
+                )}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className={cn(
+                    "w-10 h-10 rounded-xl flex items-center justify-center shadow-sm",
+                    stat.color === 'blue' ? "bg-blue-600 text-white" :
+                    stat.color === 'red' ? "bg-red-600 text-white" :
+                    stat.color === 'amber' ? "bg-amber-600 text-white" :
+                    "bg-emerald-600 text-white"
+                  )}>
+                    <stat.icon className="w-5 h-5" />
+                  </div>
+                  {stat.alert && (
+                    <motion.div 
+                      animate={{ scale: [1, 1.2, 1] }} 
+                      transition={{ repeat: Infinity, duration: 2 }}
+                      className="w-2 h-2 bg-red-600 rounded-full" 
+                    />
+                  )}
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{stat.label}</p>
+                  <h3 className="text-2xl font-black text-slate-900 mt-1">{stat.value}</h3>
+                </div>
+              </motion.div>
+            ))}
+          </div>
         </div>
-      </div>
+      </header>
 
-      {/* FILTERS & SEARCH */}
-      <div className="bg-white border-b border-slate-200 sticky top-16 z-30">
+      {/* SEARCH AND FILTERS */}
+      <div className="bg-white border-b border-slate-200 sticky top-[188px] md:top-[220px] lg:top-[248px] z-30 shadow-sm py-4">
         <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col md:flex-row gap-4">
           <div className="relative flex-1 group">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-slate-900 transition-colors" />
@@ -320,133 +303,145 @@ export function PreventiveView() {
         </div>
       </div>
 
-      {/* MACHINE LIST */}
-      <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-8 overflow-y-auto">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredForklifts.map((f) => {
-            const currentStatus = getMaintenanceStatus(f.lastHourMeter || 0, f.nextPreventiveHorometer || 0, f.lastHourMeterUpdate);
-            const nextType = getNextMaintenanceType(f.nextPreventiveHorometer || 0);
-            
-            const prevHoro = (f.nextPreventiveHorometer || 0) - 500;
-            const progress = Math.min(100, Math.max(0, ((f.lastHourMeter || 0) - prevHoro) / 500 * 100));
-            
-            const remainingHours = (f.nextPreventiveHorometer || 0) - (f.lastHourMeter || 0);
+      <div className="flex-1 max-w-7xl mx-auto w-full px-6 py-8 overflow-y-auto">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <AnimatePresence mode="popLayout">
+            {filteredForklifts.map((f, idx) => {
+              const currentStatus = getMaintenanceStatus(f.lastHourMeter || 0, f.nextPreventiveHorometer || 0, f.lastHourMeterUpdate);
+              const nextType = getNextMaintenanceType(f.nextPreventiveHorometer || 0);
+              const remainingHours = (f.nextPreventiveHorometer || 0) - (f.lastHourMeter || 0);
+              const prevBase = (f.nextPreventiveHorometer || 0) - 500;
+              const progress = Math.min(100, Math.max(0, ((f.lastHourMeter || 0) - prevBase) / 500 * 100));
 
-            const statusConfig = {
-              vencida: { label: 'Vencida', class: 'bg-red-50 text-red-600 border-red-100', icon: AlertCircle },
-              proxima: { label: 'A Vencer', class: 'bg-amber-50 text-amber-600 border-amber-100', icon: Clock },
-              desatualizado: { label: 'Desatualizado', class: 'bg-purple-50 text-purple-600 border-purple-100', icon: AlertTriangle },
-              em_dia: { label: 'No Prazo', class: 'bg-emerald-50 text-emerald-600 border-emerald-100', icon: CheckCircle2 }
-            };
+              const statusConfig: Record<string, any> = {
+                vencida: { label: 'Vencida', color: 'bg-red-500', icon: AlertCircle, bg: 'bg-red-50/50', border: 'border-red-200' },
+                proxima: { label: 'A Vencer', color: 'bg-amber-500', icon: Clock, bg: 'bg-amber-50/50', border: 'border-amber-200' },
+                desatualizado: { label: 'Ociosa', color: 'bg-slate-400', icon: Clock, bg: 'bg-slate-50', border: 'border-slate-200' },
+                em_dia: { label: 'Em Dia', color: 'bg-emerald-500', icon: CheckCircle2, bg: 'bg-emerald-50/50', border: 'border-emerald-200' }
+              };
 
-            const config = statusConfig[currentStatus as keyof typeof statusConfig] || statusConfig.em_dia;
+              const config = statusConfig[currentStatus] || statusConfig.em_dia;
 
-            return (
-              <motion.div 
-                layout
-                key={f.id}
-                className={cn(
-                  "bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden flex flex-col group transition-all hover:shadow-xl hover:shadow-slate-200/50 hover:border-slate-300",
-                  currentStatus === 'vencida' && "border-red-200 ring-2 ring-red-500/5"
-                )}
-              >
-                <div className="p-6">
-                  {/* MACHINE HEADER */}
-                  <div className="flex items-start justify-between mb-6">
-                    <div className="flex items-center gap-4">
-                      <div className="w-14 h-14 bg-slate-900 rounded-2xl flex items-center justify-center text-white font-black text-xs shadow-lg shadow-slate-200 uppercase transition-transform group-hover:scale-105">
-                        {f.model.slice(0, 4)}
+              return (
+                <motion.div 
+                  layout
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: idx * 0.05 }}
+                  key={f.id}
+                  className={cn(
+                    "bg-white rounded-[3rem] border border-slate-100 shadow-sm overflow-hidden flex flex-col group transition-all hover:shadow-2xl hover:shadow-slate-200/50",
+                    config.border
+                  )}
+                >
+                  <div className="p-8 pb-4">
+                    {/* MACHINE HEADER */}
+                    <div className="flex items-start justify-between mb-8">
+                      <div className="flex items-center gap-5">
+                        <div className="w-16 h-16 bg-slate-900 text-white rounded-[1.5rem] flex items-center justify-center flex-col shadow-xl shadow-slate-200 transition-transform group-hover:scale-105">
+                          <Truck className="w-6 h-6 mb-1" />
+                          <span className="text-[10px] font-black tracking-tight">{f.model.slice(0, 4)}</span>
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight leading-none mb-2">{f.model}</h3>
+                          <div className="flex items-center gap-2">
+                            <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded text-[9px] font-black tracking-widest">{f.serialNumber}</span>
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight leading-none">{f.model} - {f.serialNumber.slice(-2)}</h3>
-                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1.5">{f.serialNumber}</p>
-                      </div>
-                    </div>
-                    <div className={cn(
-                      "px-4 py-2 rounded-xl border flex items-center gap-2 shadow-sm transition-transform group-hover:scale-105", 
-                      config.class
-                    )}>
-                      <config.icon className="w-4 h-4" />
-                      <span className="text-[9px] font-black uppercase tracking-[0.15em] leading-none">{config.label}</span>
-                    </div>
-                  </div>
-
-                  {/* INFO GRID */}
-                  <div className="grid grid-cols-2 gap-3 mb-4">
-                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 transition-colors group-hover:bg-white group-hover:border-slate-200">
-                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Horímetro Atual</p>
-                      <p className="text-xl font-black text-slate-900 tabular-nums">{(f.lastHourMeter || 0)}h</p>
-                    </div>
-                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 transition-colors group-hover:bg-white group-hover:border-slate-200 flex flex-col justify-between">
-                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 font-black">Próxima ({nextType})</p>
-                      <div className="flex items-center justify-between">
-                        <p className="text-xl font-black text-blue-600 tabular-nums">{(f.nextPreventiveHorometer || 0)}h</p>
-                        <button 
-                          onClick={() => {
-                            const newValue = prompt("Definir próxima preventiva (horas):", String(f.nextPreventiveHorometer || 0));
-                            if (newValue !== null && !isNaN(parseFloat(newValue))) {
-                              updateDoc(doc(db, 'forklifts', f.id), { nextPreventiveHorometer: parseFloat(newValue) });
-                            }
-                          }}
-                          className="p-1.5 text-slate-300 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                          title="Ajustar próxima manutenção"
-                        >
-                          <Settings className="w-3.5 h-3.5" />
-                        </button>
+                      <div className={cn(
+                        "w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg",
+                        config.color,
+                        "text-white"
+                      )}>
+                        <config.icon className="w-5 h-5" />
                       </div>
                     </div>
-                  </div>
 
-                  {/* REINFORCED REMAINING HOURS */}
-                  <div className={cn(
-                    "mb-6 p-4 rounded-2xl border border-dashed flex items-center justify-between",
-                    remainingHours <= 0 ? "bg-red-50 border-red-200 text-red-700" : 
-                    remainingHours <= 50 ? "bg-amber-50 border-amber-200 text-amber-700" : 
-                    "bg-slate-50 border-slate-200 text-slate-600"
-                  )}>
-                    <div className="flex items-center gap-2">
-                       <Clock className="w-4 h-4 opacity-50" />
-                       <span className="text-[10px] font-black uppercase tracking-widest">Saldo de Horas</span>
+                    {/* MAINTENANCE TIMELINE */}
+                    <div className="space-y-4 mb-8">
+                      <div className="flex justify-between items-end">
+                        <div className="space-y-1">
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Saldo do Plano</p>
+                          <h4 className={cn(
+                            "text-2xl font-black tabular-nums tracking-tight",
+                            remainingHours <= 0 ? "text-red-600" : remainingHours <= 50 ? "text-amber-600" : "text-slate-900"
+                          )}>
+                            {remainingHours <= 0 ? (
+                              `VENCIDA ${Math.round(Math.abs(remainingHours))}h`
+                            ) : (
+                              `${Math.round(remainingHours)}h RESTANTES`
+                            )}
+                          </h4>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Próxima</p>
+                          <p className="text-sm font-black text-blue-600 tabular-nums">{f.nextPreventiveHorometer}h</p>
+                        </div>
+                      </div>
+
+                      <div className="h-4 w-full bg-slate-100 rounded-full p-1 shadow-inner relative overflow-hidden">
+                        <motion.div 
+                          initial={{ width: 0 }}
+                          animate={{ width: `${progress}%` }}
+                          className={cn(
+                            "h-full rounded-full shadow-lg transition-all",
+                            currentStatus === 'vencida' ? "bg-red-500" : currentStatus === 'proxima' ? "bg-amber-500" : "bg-blue-500"
+                          )}
+                        />
+                      </div>
+                      
+                      <div className="flex justify-between items-center text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                        <span>{prevBase}h</span>
+                        <div className="flex items-center gap-2 bg-slate-50 px-3 py-1 rounded-full border border-slate-100">
+                          <Activity className="w-3 h-3" />
+                          <span>Atual: {f.lastHourMeter}h</span>
+                        </div>
+                        <span>{f.nextPreventiveHorometer}h</span>
+                      </div>
                     </div>
-                    <span className="text-sm font-black tabular-nums">
-                        {remainingHours <= 0 ? (
-                          `VENCIDA HÁ ${Math.round(Math.abs(remainingHours))}h`
-                        ) : (
-                          `${Math.round(remainingHours)}h restantes`
-                        )}
-                    </span>
+
+                    <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-50">
+                      <div className="flex flex-col">
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Status de Frota</span>
+                        <div className="flex items-center gap-1.5 pt-1">
+                          <div className={cn("w-2 h-2 rounded-full", f.status === 'available' ? 'bg-emerald-500 bubble-animate' : 'bg-red-500')} />
+                          <span className="text-[10px] font-black text-slate-700 uppercase tracking-tight">
+                            {f.status === 'available' ? 'Operacional' : 'Equip. Parado'}
+                          </span>
+                        </div>
+                      </div>
+                      
+                      <div className="flex flex-col items-end">
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Revisão Tipo</span>
+                        <span className="text-[10px] font-black text-blue-600 uppercase tracking-tight py-1 px-3 bg-blue-50 rounded-full border border-blue-100">
+                          {nextType.toUpperCase()}
+                        </span>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* MACHINE TYPE & FOOTER INFO */}
-                  <div className="flex items-center justify-between mt-auto pt-4 border-t border-dashed border-slate-100">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                      <Filter className="w-3 h-3 text-slate-300" />
-                      {f.type || 'Empilhadeira'}
-                    </span>
-                    {f.lastHourMeterUpdate && (
-                      <span className="text-[8px] font-black text-slate-300 uppercase tracking-tighter">
-                        Att: {new Date(f.lastHourMeterUpdate).toLocaleDateString()}
-                      </span>
-                    )}
+                  <div className="p-8 pt-4">
+                    <motion.button 
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => {
+                        setSelectedForklift(f);
+                        setExecutionModalOpen(true);
+                      }}
+                      className={cn(
+                        "w-full py-5 rounded-[1.5rem] flex items-center justify-center gap-3 transition-all transform text-xs font-black uppercase tracking-[0.2em] shadow-xl shadow-slate-200 group-hover:shadow-blue-200/50",
+                        currentStatus === 'vencida' ? "bg-red-600 text-white hover:bg-red-700" : "bg-slate-900 text-white hover:bg-blue-600"
+                      )}
+                    >
+                      <Wrench className="w-4 h-4" />
+                      ABRIR REVISÃO
+                    </motion.button>
                   </div>
-                </div>
-
-                {/* ACTION BUTTON */}
-                <div className="p-4 bg-slate-50 border-t border-slate-100">
-                  <button 
-                    onClick={() => {
-                      setSelectedForklift(f);
-                      setExecutionModalOpen(true);
-                    }}
-                    className="w-full bg-slate-900 text-white rounded-xl py-3.5 text-[10px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-2 hover:bg-emerald-600 transition-all shadow-md active:scale-95"
-                  >
-                    <Wrench className="w-3.5 h-3.5" />
-                    Executar Preventiva
-                  </button>
-                </div>
-              </motion.div>
-            );
-          })}
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
         </div>
       </div>
 

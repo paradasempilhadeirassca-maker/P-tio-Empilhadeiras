@@ -32,7 +32,9 @@ import {
   ReferenceLine,
   Label,
   LabelList,
-  Legend
+  Legend,
+  LineChart,
+  Line
 } from 'recharts';
 import { 
   TrendingUp, 
@@ -45,7 +47,12 @@ import {
   Maximize2,
   CheckCircle2,
   Clock,
-  History as HistoryIcon
+  History as HistoryIcon,
+  Wrench,
+  Users,
+  Settings,
+  ShieldCheck,
+  Zap
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { CACHE_KEYS, CACHE_DURATION } from '../constants/cacheKeys';
@@ -63,6 +70,8 @@ export function OperationalIndicators() {
   const { profile, loading: authLoading, setQuotaExceeded } = useAuth();
   const { goals } = useData();
   const [events, setEvents] = useState<OperationalEvent[]>([]);
+  const [maintenanceHistory, setMaintenanceHistory] = useState<any[]>([]);
+  const [viewMode, setViewMode] = useState<'operators' | 'mechanics'>('operators');
   
   // Date Range Filters: Default to current month
   const now = new Date();
@@ -86,10 +95,11 @@ export function OperationalIndicators() {
       const cached = localStorage.getItem(cacheKey);
       if (cached) {
         try {
-          const { data, timestamp } = JSON.parse(cached);
+          const { events, maintenance, timestamp } = JSON.parse(cached);
           
           if (Date.now() - timestamp < CACHE_DURATION) {
-            setEvents(data);
+            setEvents(events || []);
+            setMaintenanceHistory(maintenance || []);
             setIsRefreshing(false);
             return;
           }
@@ -113,9 +123,21 @@ export function OperationalIndicators() {
       
       setEvents(newEvents);
       
+      // Fetch maintenance history in range
+      const qM = query(
+        collection(db, 'maintenance_history'),
+        where('stopTime', '>=', startDate + 'T00:00:00'),
+        where('stopTime', '<=', endDate + 'T23:59:59'),
+        orderBy('stopTime', 'asc')
+      );
+      const mSnap = await getDocs(qM);
+      const mData = mSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setMaintenanceHistory(mData);
+      
       // Update Cache
       localStorage.setItem(cacheKey, JSON.stringify({
-        data: newEvents,
+        events: newEvents,
+        maintenance: mData,
         timestamp: Date.now()
       }));
 
@@ -216,6 +238,52 @@ export function OperationalIndicators() {
 
     return data;
   }, [events, filterShift]);
+
+  const maintenanceStats = useMemo(() => {
+    const completedRepairs = maintenanceHistory.filter(m => m.status === 'completed' && m.startTime && m.endTime);
+    
+    // MTTR (Mean Time to Repair) in minutes
+    const totalRepairMinutes = completedRepairs.reduce((acc, m) => {
+      const start = new Date(m.startTime!).getTime();
+      const end = new Date(m.endTime!).getTime();
+      return acc + (end - start) / (1000 * 60);
+    }, 0);
+    const mttr = completedRepairs.length > 0 ? totalRepairMinutes / completedRepairs.length : 0;
+
+    // MTTP (Mean Time to Parts)
+    const totalPartsMinutes = completedRepairs.reduce((acc, m) => acc + (m.totalWaitingPartsMinutes || 0), 0);
+    const mttp = completedRepairs.length > 0 ? totalPartsMinutes / completedRepairs.length : 0;
+
+    // Reliability (Stops per 100h)
+    // Needs total operational hours in period
+    let totalOpSeconds = 0;
+    Object.values(dailyData).forEach((shifts: any) => {
+      Object.values(shifts).forEach((ops: any) => {
+        Object.values(ops).forEach((s: any) => {
+          totalOpSeconds += (s.activeSeconds || 0);
+        });
+      });
+    });
+    const totalOpHours = totalOpSeconds / 3600;
+    const reliability = totalOpHours > 1 ? (maintenanceHistory.length / totalOpHours) * 100 : 0;
+
+    // Category distribution
+    const categoryCount: Record<string, number> = {};
+    maintenanceHistory.forEach(m => {
+      const cat = m.category || 'Outro';
+      categoryCount[cat] = (categoryCount[cat] || 0) + 1;
+    });
+    const categoryData = Object.entries(categoryCount).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+
+    return {
+      mttr: Math.round(mttr),
+      mttp: Math.round(mttp),
+      reliability: parseFloat(reliability.toFixed(1)),
+      totalStops: maintenanceHistory.length,
+      categoryData,
+      completedRepairsCount: completedRepairs.length
+    };
+  }, [maintenanceHistory, dailyData]);
 
   const operationStats = useMemo(() => {
     const list: any[] = [];
@@ -433,6 +501,33 @@ export function OperationalIndicators() {
           </div>
           
           <div className="flex flex-wrap items-center gap-3">
+            <div className="flex bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
+              <button
+                onClick={() => setViewMode('operators')}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all",
+                  viewMode === 'operators' 
+                    ? "bg-white text-indigo-600 shadow-sm" 
+                    : "text-slate-500 hover:text-slate-700"
+                )}
+              >
+                <Users className="w-4 h-4" />
+                OPERADORES
+              </button>
+              <button
+                onClick={() => setViewMode('mechanics')}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all",
+                  viewMode === 'mechanics' 
+                    ? "bg-white text-indigo-600 shadow-sm" 
+                    : "text-slate-500 hover:text-slate-700"
+                )}
+              >
+                <Wrench className="w-4 h-4" />
+                MECÂNICOS
+              </button>
+            </div>
+
             <button
               onClick={handleRefresh}
               disabled={isRefreshing}
@@ -476,8 +571,10 @@ export function OperationalIndicators() {
 
       <div className="p-6 space-y-8 max-w-7xl mx-auto w-full">
         
-        {/* TOP LEVEL: GLOBAL OVERVIEW */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {viewMode === 'operators' ? (
+          <>
+            {/* TOP LEVEL: GLOBAL OVERVIEW */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100 flex items-center gap-6">
                 <div className="w-16 h-16 bg-blue-50 rounded-3xl flex items-center justify-center text-blue-600">
                     <Package className="w-8 h-8" />
@@ -881,6 +978,132 @@ export function OperationalIndicators() {
                 </div>
             </div>
         </section>
+          </>
+        ) : (
+          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {/* MECHANICS VIEW */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100 flex items-center gap-6">
+                  <div className="w-14 h-14 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600">
+                      <Clock className="w-7 h-7" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">MTTR Médio</p>
+                    <h3 className="text-2xl font-black text-slate-900">{maintenanceStats.mttr} <span className="text-xs text-slate-400">min</span></h3>
+                  </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100 flex items-center gap-6">
+                  <div className="w-14 h-14 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-600">
+                      <Package className="w-7 h-7" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">MTTP Médio</p>
+                    <h3 className="text-2xl font-black text-slate-900">{maintenanceStats.mttp} <span className="text-xs text-slate-400">min</span></h3>
+                  </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100 flex items-center gap-6">
+                  <div className="w-14 h-14 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600">
+                      <Zap className="w-7 h-7" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Confiabilidade</p>
+                    <h3 className="text-2xl font-black text-slate-900">{maintenanceStats.reliability} <span className="text-xs text-slate-400">f/100h</span></h3>
+                  </div>
+              </div>
+
+              <div className="bg-slate-900 p-6 rounded-[2.5rem] shadow-sm flex items-center gap-6 text-white">
+                  <div className="w-14 h-14 bg-white/10 rounded-2xl flex items-center justify-center text-indigo-400">
+                      <Settings className="w-7 h-7" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Manutenções</p>
+                    <h3 className="text-2xl font-black text-white">{maintenanceStats.totalStops}</h3>
+                  </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <div className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100">
+                <div className="flex items-center gap-3 mb-8">
+                  <div className="p-3 bg-indigo-50 rounded-2xl">
+                    <PieChart className="w-5 h-5 text-indigo-600" />
+                  </div>
+                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">Distribuição por Categoria</h3>
+                </div>
+                <div className="h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={maintenanceStats.categoryData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={80}
+                        paddingAngle={5}
+                        dataKey="value"
+                      >
+                        {maintenanceStats.categoryData.map((_entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100">
+                <div className="flex items-center gap-3 mb-8">
+                  <div className="p-3 bg-blue-50 rounded-2xl">
+                    <Activity className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">Ranking de Categorias</h3>
+                </div>
+                <div className="space-y-4">
+                  {maintenanceStats.categoryData.map((cat, idx) => (
+                    <div key={cat.name} className="flex items-center gap-4">
+                      <span className="w-6 text-[10px] font-black text-slate-300">0{idx + 1}</span>
+                      <div className="flex-1">
+                        <div className="flex justify-between items-baseline mb-1">
+                          <span className="text-[10px] font-black text-slate-700 uppercase">{cat.name}</span>
+                          <span className="text-xs font-black text-slate-900">{cat.value}</span>
+                        </div>
+                        <div className="h-1.5 w-full bg-slate-50 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-indigo-500 transition-all duration-1000"
+                            style={{ width: `${(cat.value / (maintenanceStats.categoryData[0]?.value || 1)) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* MTTR Insight Card */}
+            <div className="p-8 bg-gradient-to-br from-indigo-600 to-blue-700 rounded-[3rem] shadow-xl text-white relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -mr-32 -mt-32" />
+              <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
+                <div className="space-y-4">
+                  <span className="px-4 py-1.5 bg-white/20 rounded-full text-[10px] font-black uppercase tracking-widest">Indicador Crítico de Manutenção</span>
+                  <h3 className="text-3xl font-black tracking-tight">Tempo Médio de Reparo (MTTR)</h3>
+                  <p className="text-indigo-100 text-sm font-medium max-w-md">
+                    Seu MTTR está em <span className="font-black text-white">{maintenanceStats.mttr} minutos</span>. 
+                    Reparos mais rápidos aumentam a disponibilidade física da frota para a operação.
+                  </p>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-7xl font-black">{maintenanceStats.mttr}</span>
+                  <span className="text-xl font-bold opacity-60 uppercase">minutos</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* DETAIL MODAL */}

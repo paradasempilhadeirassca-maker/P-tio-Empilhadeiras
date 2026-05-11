@@ -54,7 +54,7 @@ import {
   Leaf,
   History as HistoryIcon
 } from 'lucide-react';
-import { cn, formatDuration } from '../lib/utils';
+import { cn, formatDuration, formatDate, formatTime, formatDateTime } from '../lib/utils';
 import { getCurrentShift } from '../lib/operationalLogic';
 import { Checklist, ShiftReport, OccurrenceSeverity } from '../types';
 import { FleetManagement } from './FleetManagement';
@@ -64,7 +64,7 @@ import { handleFirestoreError, OperationType as FirestoreOperationType } from '.
 export function LeaderView() {
   const { profile, loading: authLoading, setQuotaExceeded } = useAuth();
   const { showToast } = useToast();
-  const { forklifts, operators, activeStops, refreshGlobalData } = useData();
+  const { forklifts, uniqueForklifts, operators, activeStops, absences, refreshGlobalData } = useData();
   const [events, setEvents] = useState<OperationalEvent[]>([]);
   
   const [selectedForkliftId, setSelectedForkliftId] = useState<string>('');
@@ -95,60 +95,18 @@ export function LeaderView() {
   const [isShiftFinalized, setIsShiftFinalized] = useState(false);
   const [finalHourMeterInput, setFinalHourMeterInput] = useState<string>('');
 
+  const [operatorSearch, setOperatorSearch] = useState('');
+  
+  // Machines in maintenance/stopped shouldn't be selectable for operations in LeaderView
+  const leaderUniqueForklifts = useMemo(() => {
+    return uniqueForklifts
+      .filter(f => f.status !== 'stopped' && f.status !== 'maintenance');
+  }, [uniqueForklifts]);
+
   // Derived state: find the last event for the selected forklift to know its current status
-  const uniqueForklifts = useMemo(() => {
-    // Identify machines with active maintenance occurrences
-    const machineStatusMap = new Map<string, ForkliftStatus>();
-    activeStops.forEach(stop => {
-      const f = forklifts.find(fork => fork.id === stop.forkliftId);
-      if (f?.serialNumber) {
-        const serial = f.serialNumber.trim().toLowerCase();
-        const severity = stop.severity || 'high';
-        const targetStatus: ForkliftStatus = severity === 'high' ? 'stopped' : 'maintenance';
-        
-        const existingStatus = machineStatusMap.get(serial);
-        if (!existingStatus || (existingStatus === 'maintenance' && targetStatus === 'stopped')) {
-          machineStatusMap.set(serial, targetStatus);
-        }
-      }
-    });
-
-    const fleetMap = new Map<string, Forklift>();
-    
-    // Sort by createdAt descending to pick the most recent record for each serial number
-    const sortedForklifts = [...forklifts].sort((a, b) => {
-      const dateA = (a as any).createdAt || '';
-      const dateB = (b as any).createdAt || '';
-      return dateB.localeCompare(dateA);
-    });
-
-    sortedForklifts.forEach(f => {
-      const serial = (f.serialNumber || '').trim().toLowerCase();
-      const key = serial || f.id;
-      
-      if (!fleetMap.has(key)) {
-        const enriched = { ...f };
-        const activeStatus = serial ? machineStatusMap.get(serial) : null;
-        
-        if (activeStatus) {
-          enriched.status = activeStatus;
-        } else if (enriched.status === 'stopped' || enriched.status === 'maintenance') {
-          // If no active occurrence, it must be operational
-          enriched.status = 'available';
-        }
-        fleetMap.set(key, enriched);
-      }
-    });
-
-    // Machines in maintenance/stopped shouldn't be selectable for operations
-    return Array.from(fleetMap.values())
-      .filter(f => f.status !== 'stopped' && f.status !== 'maintenance')
-      .sort((a, b) => (a.serialNumber || '').localeCompare(b.serialNumber || ''));
-  }, [forklifts, activeStops]);
-
   const uniqueOperators = useMemo(() => {
-    const nameMap = new Map<string, UserProfile>();
-    const seenEmails = new Set<string>();
+    const idMap = new Map<string, UserProfile>();
+    const now = new Date();
     
     // Sort to prioritize users with display names
     const sorted = [...operators].sort((a, b) => {
@@ -157,21 +115,27 @@ export function LeaderView() {
       return 0;
     });
 
-    sorted.forEach(o => {
-      const nameKey = (o.displayName || '').toLowerCase().trim();
-      const emailKey = (o.email || '').toLowerCase().trim();
-      
-      // If we haven't seen this name and we haven't seen this email
-      if ((!nameKey || !nameMap.has(nameKey)) && (!emailKey || !seenEmails.has(emailKey))) {
-        if (nameKey) nameMap.set(nameKey, o);
-        if (emailKey) seenEmails.add(emailKey);
-        // If neither key available (unlikely), use UID as last resort to include them
-        if (!nameKey && !emailKey) {
-           nameMap.set(o.uid, o);
+    sorted
+      .filter(o => o.role === 'operator') // Only operators as requested
+      .filter(o => {
+        // Filter out if there is an active absence today
+        const activeAbsence = absences.find(abs => {
+          if (abs.operatorId !== o.uid) return false;
+          const start = new Date(abs.startDate);
+          const end = new Date(abs.endDate);
+          // Set hours to zero for date-only comparison
+          start.setHours(0, 0, 0, 0);
+          end.setHours(23, 59, 59, 999);
+          return now >= start && now <= end;
+        });
+        return !activeAbsence;
+      })
+      .forEach(o => {
+        if (!idMap.has(o.uid)) {
+          idMap.set(o.uid, o);
         }
-      }
-    });
-    return Array.from(nameMap.values()).sort((a, b) => (a.displayName || a.email || '').localeCompare(b.displayName || b.email || ''));
+      });
+    return Array.from(idMap.values()).sort((a, b) => (a.displayName || a.email || '').localeCompare(b.displayName || b.email || ''));
   }, [operators]);
 
   // State for quick assignment to a specific operation
@@ -247,11 +211,17 @@ export function LeaderView() {
     const active = new Set<string>();
     const seenSet = new Set<string>();
     const currentShift = getCurrentShift();
+    const now = new Date();
+    const activeThreshold = new Date(now.getTime() - (14 * 60 * 60 * 1000)); // 14 hours limit
 
     for (const event of events) {
       if (!seenSet.has(event.forkliftId)) {
         seenSet.add(event.forkliftId);
-        if (event.action !== 'stop' && event.shift === currentShift) active.add(event.forkliftId);
+        // Check if event is recent AND same shift to be considered busy
+        const eventTime = new Date(event.timestamp);
+        if (event.action !== 'stop' && event.shift === currentShift && eventTime > activeThreshold) {
+          active.add(event.forkliftId);
+        }
       }
     }
     return active;
@@ -265,12 +235,20 @@ export function LeaderView() {
     const active = new Set<string>();
     const seenSet = new Set<string>();
     const activeOps: string[] = [];
+    const currentShift = getCurrentShift();
+    const now = new Date();
+    const activeThreshold = new Date(now.getTime() - (14 * 60 * 60 * 1000)); // 14 hours limit
     
-    // Using the same "latest state" logic
+    // Get latest event for each machine to see which operators are REALLY busy
     for (const event of events) {
+      if (event.forkliftId === 'system_consolidated' || event.forkliftId.startsWith('global_')) continue;
+
       if (!seenSet.has(event.forkliftId)) {
         seenSet.add(event.forkliftId);
-        if (event.action !== 'stop') {
+        // Only consider operators as busy if the latest machine event is NOT a stop 
+        // AND it's from current shift AND it's within the threshold to avoid "ghost" busy status
+        const eventTime = new Date(event.timestamp);
+        if (event.action !== 'stop' && event.shift === currentShift && eventTime > activeThreshold) {
           activeOps.push(...(event.operatorIds || []));
         }
       }
@@ -783,10 +761,12 @@ export function LeaderView() {
       // Update the forklift's last horometer
       if (shiftSummary.forkliftId) {
         await updateDoc(doc(db, 'forklifts', shiftSummary.forkliftId), {
-          lastHourMeter: finalMeter
+          lastHourMeter: finalMeter,
+          lastHourMeterUpdate: new Date().toISOString()
         });
       }
 
+      await refreshGlobalData(true);
       showToast('Turno finalizado com sucesso!', 'success');
       
       setShowShiftSummaryModal(false);
@@ -1112,7 +1092,7 @@ export function LeaderView() {
                               <div className="flex items-center justify-between sm:justify-end gap-3 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-200/50">
                                 <div className="text-left sm:text-right mr-2">
                                   <p className="text-[8px] font-black text-slate-400 uppercase leading-none">Desde</p>
-                                  <p className="text-[10px] font-bold text-slate-900 mt-0.5">{new Date(activeOp.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                                  <p className="text-[10px] font-bold text-slate-900 mt-0.5">{formatTime(activeOp.timestamp)}</p>
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <button
@@ -1195,10 +1175,27 @@ export function LeaderView() {
                         </select>
                       </div>
 
-                      <div className="space-y-2 md:space-y-3">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 italic">Selecionar EQUIPE (Máx 2)</label>
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 italic">Selecionar EQUIPE (Máx 2)</label>
+                          <div className="relative">
+                             <input 
+                               type="text"
+                               placeholder="BUSCAR NOME..."
+                               className="bg-slate-100 border-none rounded-lg px-3 py-1 text-[9px] font-black uppercase outline-none focus:ring-2 focus:ring-slate-400 w-32"
+                               value={operatorSearch}
+                               onChange={(e) => setOperatorSearch(e.target.value)}
+                             />
+                          </div>
+                        </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[30vh] md:max-h-[25vh] overflow-y-auto p-1 no-scrollbar">
-                          {uniqueOperators.map(op => {
+                          {uniqueOperators
+                            .filter(op => 
+                              !operatorSearch || 
+                              op.displayName?.toLowerCase().includes(operatorSearch.toLowerCase()) || 
+                              op.email?.toLowerCase().includes(operatorSearch.toLowerCase())
+                            )
+                            .map(op => {
                             const isBusy = busyOperatorIds.has(op.uid);
                             const isSelected = selectedOperatorIds.includes(op.uid);
                             return (
@@ -1349,7 +1346,7 @@ export function LeaderView() {
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 italic">Equipe de Operação ({selectedOperatorIds.length})</label>
                     <div className="flex flex-wrap gap-2 p-4 bg-slate-50 border border-slate-200 rounded-2xl">
-                      {operators.filter(o => selectedOperatorIds.includes(o.uid)).map(o => (
+                      {uniqueOperators.filter(o => selectedOperatorIds.includes(o.uid)).map(o => (
                         <span key={o.uid} className="bg-slate-900 text-white px-3 py-1 rounded-lg text-[10px] font-black uppercase">
                           {o.displayName || o.email?.split('@')[0]}
                         </span>
@@ -1453,7 +1450,8 @@ export function LeaderView() {
                 </div>
                 <div className="divide-y divide-slate-100">
                   {activeStops.map(stop => {
-                    const forklift = forklifts.find(f => f.id === stop.forkliftId);
+                    const directForklift = forklifts.find(f => f.id === stop.forkliftId);
+                    const forklift = uniqueForklifts.find(f => f.serialNumber?.trim().toLowerCase() === directForklift?.serialNumber?.trim().toLowerCase()) || directForklift;
                     const isAwaitingParts = stop.status === 'awaiting_parts';
                     
                     return (
@@ -1486,7 +1484,7 @@ export function LeaderView() {
                             <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">
                               {stop.operatorName} • {stop.stopTime ? (
                                 typeof stop.stopTime === 'string' 
-                                  ? `${new Date(stop.stopTime).toLocaleDateString()} ${new Date(stop.stopTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                                  ? `${formatDate(stop.stopTime)} ${formatTime(stop.stopTime)}`
                                   : (stop.stopTime as any).toDate?.().toLocaleString() || '-'
                               ) : '-'}
                             </p>
@@ -1546,15 +1544,16 @@ export function LeaderView() {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {events.map((event) => {
-                        const forklift = forklifts.find(f => f.id === event.forkliftId);
+                        const directForklift = forklifts.find(f => f.id === event.forkliftId);
+                        const forklift = uniqueForklifts.find(f => f.serialNumber?.trim().toLowerCase() === directForklift?.serialNumber?.trim().toLowerCase()) || directForklift;
                         return (
                         <tr key={event.id} className="hover:bg-slate-50 transition-colors">
                           <td className="px-8 py-6">
                             <span className="block text-xs font-black text-slate-900">
-                              {new Date(event.timestamp).toLocaleDateString()}
+                              {formatDate(event.timestamp)}
                             </span>
                             <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
-                              {new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              {formatTime(event.timestamp)}
                             </span>
                           </td>
                           <td className="px-8 py-6">

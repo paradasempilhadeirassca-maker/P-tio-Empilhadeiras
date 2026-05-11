@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   collection, 
   query, 
@@ -11,14 +11,17 @@ import {
   QueryDocumentSnapshot
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Forklift, UserProfile, OperationGoal, MaintenanceStop } from '../types';
+import { Forklift, UserProfile, OperationGoal, MaintenanceStop, ForkliftStatus, OperatorAbsence } from '../types';
 import { useAuth } from './Auth';
 
 interface DataContextType {
   forklifts: Forklift[];
+  uniqueForklifts: Forklift[];
   operators: UserProfile[];
+  mechanics: UserProfile[];
   goals: OperationGoal[];
   activeStops: MaintenanceStop[];
+  absences: OperatorAbsence[];
   loading: boolean;
   refreshGlobalData: (force?: boolean) => Promise<void>;
   quotaExceeded: boolean;
@@ -33,9 +36,58 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const { user, profile, loading: authLoading, quotaExceeded, setQuotaExceeded } = useAuth();
   const [forklifts, setForklifts] = useState<Forklift[]>([]);
   const [operators, setOperators] = useState<UserProfile[]>([]);
+  const [mechanics, setMechanics] = useState<UserProfile[]>([]);
   const [goals, setGoals] = useState<OperationGoal[]>([]);
   const [activeStops, setActiveStops] = useState<MaintenanceStop[]>([]);
+  const [absences, setAbsences] = useState<OperatorAbsence[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const uniqueForklifts = useMemo(() => {
+    // Identify machines with active maintenance occurrences
+    const machineStatusMap = new Map<string, ForkliftStatus>();
+    activeStops.forEach(stop => {
+      const f = forklifts.find(fork => fork.id === stop.forkliftId);
+      if (f?.serialNumber) {
+        const serial = f.serialNumber.trim().toLowerCase();
+        const severity = stop.severity || 'high';
+        const targetStatus: ForkliftStatus = severity === 'high' ? 'stopped' : 'maintenance';
+        
+        const existingStatus = machineStatusMap.get(serial);
+        if (!existingStatus || (existingStatus === 'maintenance' && targetStatus === 'stopped')) {
+          machineStatusMap.set(serial, targetStatus);
+        }
+      }
+    });
+
+    const fleetMap = new Map<string, Forklift>();
+    
+    // Canonical record is the most recently created one for that serial Number
+    const sorted = [...forklifts].sort((a, b) => {
+      const dateA = (a as any).createdAt || '';
+      const dateB = (b as any).createdAt || '';
+      return dateB.localeCompare(dateA);
+    });
+
+    sorted.forEach(f => {
+      const serial = (f.serialNumber || '').trim().toLowerCase();
+      const key = serial || f.id;
+      
+      if (!fleetMap.has(key)) {
+        const enriched = { ...f };
+        const activeStatus = serial ? machineStatusMap.get(serial) : null;
+        
+        if (activeStatus) {
+          enriched.status = activeStatus;
+        } else if (enriched.status === 'stopped' || enriched.status === 'maintenance') {
+          // If no active occurrence, it must be operational
+          enriched.status = 'available';
+        }
+        fleetMap.set(key, enriched);
+      }
+    });
+
+    return Array.from(fleetMap.values()).sort((a, b) => (a.serialNumber || '').localeCompare(b.serialNumber || ''));
+  }, [forklifts, activeStops]);
 
   const fetchGlobalData = useCallback(async (force = false) => {
     if (!user) return;
@@ -93,11 +145,34 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       // Operators
       let oData: UserProfile[] = [];
       try {
-        const oSnap = await getDocs(query(collection(db, 'users'), where('role', '==', 'operator'), limit(200)));
+        const oSnap = await getDocs(query(
+          collection(db, 'users'), 
+          where('role', 'in', ['operator', 'production']), 
+          limit(1000)
+        ));
         oData = oSnap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile));
-        setOperators(oData);
+        
+        // Deduplicate by UID just in case there are double entries in the DB
+        const uniqueOps = new Map<string, UserProfile>();
+        oData.forEach(op => {
+          if (op.uid) uniqueOps.set(op.uid, op);
+        });
+        setOperators(Array.from(uniqueOps.values()));
       } catch (err) {
         console.error("Error fetching operators:", err);
+      }
+
+      // Mechanics
+      try {
+        const mSnap = await getDocs(query(
+          collection(db, 'users'), 
+          where('role', '==', 'mechanic'), 
+          limit(50)
+        ));
+        const mData = mSnap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile));
+        setMechanics(mData);
+      } catch (err) {
+        console.error("Error fetching mechanics:", err);
       }
 
       // Goals
@@ -110,10 +185,21 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         console.error("Error fetching goals:", err);
       }
 
+      // Absences
+      let abData: OperatorAbsence[] = [];
+      try {
+        const abSnap = await getDocs(collection(db, 'operator_absences'));
+        abData = abSnap.docs.map(d => ({ id: d.id, ...d.data() } as OperatorAbsence));
+        setAbsences(abData);
+      } catch (err) {
+        console.error("Error fetching absences:", err);
+      }
+
       // Salvar no Cache
       localStorage.setItem(CACHE_KEY, JSON.stringify({
         forklifts: fData,
         operators: oData,
+        mechanics: Array.from(new Set([...mechanics])), // Just a place holder for cache structure
         goals: gData,
         activeStops: aData,
         timestamp: Date.now()
@@ -167,11 +253,15 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   return (
     <DataContext.Provider value={{ 
       forklifts, 
+      uniqueForklifts,
       operators, 
+      mechanics,
       goals, 
       activeStops,
+      absences,
       loading, 
       refreshGlobalData: fetchGlobalData,
+      fetchGlobalData,
       quotaExceeded,
       setQuotaExceeded
     }}>

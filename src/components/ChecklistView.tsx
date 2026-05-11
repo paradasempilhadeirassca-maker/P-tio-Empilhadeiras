@@ -36,7 +36,7 @@ const DEFAULT_ITEMS = [
 export function ChecklistView() {
   const { profile, loading: authLoading, setQuotaExceeded } = useAuth();
   const { showToast } = useToast();
-  const { forklifts, activeStops } = useData();
+  const { forklifts, activeStops, refreshGlobalData } = useData();
   const [checklists, setChecklists] = useState<Checklist[]>([]);
   const [selectedForklift, setSelectedForklift] = useState<string>('');
   const [items, setItems] = useState<ChecklistItem[]>(
@@ -244,6 +244,7 @@ export function ChecklistView() {
       // Update forklift last hour meter and status
       const updatePromise = updateDoc(doc(db, 'forklifts', selectedForklift), {
         lastHourMeter: currentMeter,
+        lastHourMeterUpdate: new Date().toISOString(),
         status: hasMajorIssues ? 'at_risk' : 'available'
       });
 
@@ -256,6 +257,7 @@ export function ChecklistView() {
         showToast('Check-list salvo localmente (Offline).', 'info');
       } else {
         showToast('Check-list registrado com sucesso!', 'success');
+        refreshGlobalData(true);
       }
 
       // Send WhatsApp Notification

@@ -1,4 +1,4 @@
-export type UserRole = 'operator' | 'leader' | 'mechanic' | 'manager';
+export type UserRole = 'operator' | 'production' | 'leader' | 'mechanic' | 'manager';
 
 export interface UserProfile {
   uid: string;
@@ -9,7 +9,9 @@ export interface UserProfile {
   password?: string; // Stored for simple recovery (no email)
 }
 
-export type ForkliftStatus = 'available' | 'stopped' | 'maintenance' | 'at_risk';
+export type ForkliftStatus = 'available' | 'stopped' | 'maintenance' | 'at_risk' | 'interdicted' | 'external' | 'standby' | 'reserva';
+
+export type ForkliftRiskScore = 'low' | 'medium' | 'high' | 'critical';
 
 export type ForkliftType = 'empilhadeira' | 'manipulador';
 
@@ -19,6 +21,8 @@ export interface Forklift {
   serialNumber: string;
   type: ForkliftType;
   status: ForkliftStatus;
+  riskScore?: ForkliftRiskScore;
+  sector?: string;
   lastMaintenance?: string;
   nextPreventive?: string;
   lastPreventiveHorometer?: number;
@@ -31,10 +35,12 @@ export interface Forklift {
   assignedOperatorNameShift2?: string;
   lastHourMeter?: number;
   lastHourMeterUpdate?: string;
+  averageDailyUsage?: number;
 }
 
 export type MaintenanceType = 'corrective' | 'preventive';
-export type MaintenanceStatus = 'pending' | 'in_progress' | 'awaiting_parts' | 'completed';
+export type MaintenanceCategory = 'Motor' | 'Hidráulico' | 'Elétrica' | 'Transmissão' | 'Pneus' | 'Estrutural' | 'Acidente operacional' | 'Falta de peça' | 'Preventiva' | 'Outro';
+export type MaintenanceStatus = 'pending' | 'in_progress' | 'awaiting_parts' | 'completed' | 'awaiting_mechanic' | 'awaiting_budget' | 'interdicted' | 'external';
 
 export interface Part {
   name: string;
@@ -68,12 +74,13 @@ export interface InventoryHistory {
   timestamp: string;
 }
 
-export type OccurrenceSeverity = 'low' | 'medium' | 'high'; // low: Reparo, medium: Falha Iminente, high: Parada
+export type OccurrenceSeverity = 'low' | 'medium' | 'high' | 'critical'; // low: Reparo, medium: Falha Iminente, high: Parada, critical: Parada Critica
 
 export interface MaintenanceStop {
   id: string;
   forkliftId: string;
   type: MaintenanceType;
+  category?: MaintenanceCategory;
   status: MaintenanceStatus;
   operatorId: string;
   operatorName?: string;
@@ -87,12 +94,15 @@ export interface MaintenanceStop {
   totalWaitingPartsMinutes?: number;
   pendingPartsList?: string[];
   description: string;
+  operationalImpact?: string;
+  estimatedCost?: number;
   hourMeter?: number;
   approverName?: string;
   repairNotes?: string;
   parts: Part[];
   isIncidentOnly?: boolean;
   severity?: OccurrenceSeverity;
+  isReincident?: boolean;
 }
 
 export interface ChecklistItem {
@@ -197,4 +207,26 @@ export interface Checklist {
   finalHourMeter: number;
   shift: ShiftType;
   checklistScore: number;
+}
+
+export enum AbsenceReason {
+  VACATION = 'Férias',
+  DAY_OFF = 'Folga',
+  MEDICAL = 'Atestado',
+  TRAINING = 'Treinamento',
+  PERSONAL = 'Licença/Pessoal',
+  ABSENT = 'Falta',
+  REMOVED = 'Afastado'
+}
+
+export interface OperatorAbsence {
+  id: string;
+  operatorId: string;
+  operatorName: string;
+  role: UserRole;
+  sector: string;
+  startDate: string;
+  endDate: string;
+  reason: AbsenceReason;
+  notes?: string;
 }

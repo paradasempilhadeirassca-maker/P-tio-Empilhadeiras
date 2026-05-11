@@ -19,20 +19,27 @@ import {
   Loader2,
   Lock,
   X,
-  Info
+  Info,
+  Save
 } from 'lucide-react';
 import { 
   collection, 
   query, 
   getDocs,
-  writeBatch
+  writeBatch,
+  doc,
+  updateDoc,
+  deleteDoc,
+  where
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { cn } from '../lib/utils';
 import { UserProfile } from '../types';
 import { useState, useEffect } from 'react';
 import { useAuth } from './Auth';
+import { useData } from './DataContext';
 import { WeeklyReminder } from './WeeklyReminder';
+import { handleFirestoreError, OperationType as FirestoreOp } from '../lib/firebaseErrorHandler';
 
 interface HomeMenuProps {
   profile: UserProfile;
@@ -49,10 +56,57 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isChangingPass, setIsChangingPass] = useState(false);
   const [passError, setPassError] = useState('');
-  const [activeTab, setActiveTab] = useState<'profile' | 'system'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'system' | 'goals'>('profile');
   const [isResetting, setIsResetting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetStatus, setResetStatus] = useState<{ type: 'success' | 'error' | null, message: string }>({ type: null, message: '' });
+  const [editingGoal, setEditingGoal] = useState<{ operationType: string, shift: '1' | '2', value: string } | null>(null);
+  const { goals: operationGoals } = useData();
+
+  const handleUpdateGoal = async () => {
+    if (!editingGoal) return;
+    
+    const goalValue = parseFloat(editingGoal.value);
+    if (isNaN(goalValue)) return;
+    const path = 'operation_goals';
+
+    try {
+      const q = query(
+        collection(db, path), 
+        where('operationType', '==', editingGoal.operationType),
+        where('shift', '==', editingGoal.shift)
+      );
+      const snapshot = await getDocs(q);
+      
+      if (!snapshot.empty) {
+        await updateDoc(doc(db, path, snapshot.docs[0].id), {
+          goal: goalValue,
+          updatedAt: new Date().toISOString()
+        });
+      } else {
+        const batch = writeBatch(db);
+        const newGoalRef = doc(collection(db, path));
+        batch.set(newGoalRef, {
+          operationType: editingGoal.operationType,
+          shift: editingGoal.shift,
+          goal: goalValue,
+          updatedAt: new Date().toISOString()
+        });
+        await batch.commit();
+      }
+      setEditingGoal(null);
+    } catch (error) {
+      handleFirestoreError(error, FirestoreOp.WRITE, path);
+    }
+  };
+
+  const handleResetGoal = async (goalId: string) => {
+    try {
+      await deleteDoc(doc(db, 'operation_goals', goalId));
+    } catch (error) {
+      handleFirestoreError(error, FirestoreOp.DELETE, `operation_goals/${goalId}`);
+    }
+  };
 
   const handleResetData = async () => {
     setIsResetting(true);
@@ -328,6 +382,15 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
                   >
                     Sistema
                   </button>
+                  <button
+                    onClick={() => setActiveTab('goals')}
+                    className={cn(
+                      "flex-1 py-3 text-xs font-black uppercase tracking-widest rounded-xl transition-all",
+                      activeTab === 'goals' ? "bg-white text-emerald-600 shadow-sm" : "text-slate-400 hover:text-slate-600"
+                    )}
+                  >
+                    Metas
+                  </button>
                 </div>
               )}
 
@@ -390,6 +453,77 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
                         {isChangingPass ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Confirmar Alteração'}
                       </button>
                     </form>
+                  </div>
+                ) : activeTab === 'goals' ? (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Zap className="w-5 h-5 text-emerald-500" />
+                      <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Metas de Operação</h3>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4">
+                      {['tirar_producao', 'quebra', 'emblocamento', 'carregamento'].map((type) => (
+                        <div key={type} className="bg-slate-50 p-5 rounded-3xl border border-slate-200">
+                          <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest mb-4 flex items-center justify-between">
+                            {type.replace('_', ' ')}
+                            <span className="text-[10px] text-slate-400">Total Fardos / Turno</span>
+                          </h4>
+                          <div className="grid grid-cols-2 gap-3">
+                            {['1', '2'].map((shift) => {
+                              const existingGoal = operationGoals.find(g => g.operationType === type && g.shift === shift);
+                              const isEditing = editingGoal?.operationType === type && editingGoal?.shift === shift;
+
+                              return (
+                                <div key={shift} className="space-y-1.5">
+                                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center justify-between">
+                                    Turno {shift}
+                                    {existingGoal && !isEditing && (
+                                      <button 
+                                        onClick={() => handleResetGoal(existingGoal.id!)}
+                                        className="text-red-400 hover:text-red-600"
+                                      >
+                                        <History className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                  </label>
+                                  {isEditing ? (
+                                    <div className="flex gap-1.5">
+                                      <input 
+                                        type="number"
+                                        value={editingGoal.value}
+                                        onChange={(e) => setEditingGoal({ ...editingGoal, value: e.target.value })}
+                                        className="flex-1 bg-white border-2 border-blue-500 rounded-xl px-3 py-2 text-sm font-bold outline-none"
+                                        autoFocus
+                                      />
+                                      <button 
+                                        onClick={handleUpdateGoal}
+                                        className="bg-blue-600 text-white p-2 rounded-xl hover:bg-blue-700"
+                                      >
+                                        <Save className="w-4 h-4" />
+                                      </button>
+                                      <button 
+                                        onClick={() => setEditingGoal(null)}
+                                        className="bg-slate-200 text-slate-500 p-2 rounded-xl hover:bg-slate-300"
+                                      >
+                                        <X className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button 
+                                      onClick={() => setEditingGoal({ operationType: type, shift: shift as '1' | '2', value: existingGoal?.goal?.toString() || '' })}
+                                      className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-black text-slate-700 text-left hover:border-emerald-300 transition-all flex justify-between items-center group"
+                                    >
+                                      <span>{existingGoal?.goal || 'N/A'}</span>
+                                      <Settings className="w-3.5 h-3.5 text-slate-300 group-hover:text-emerald-500 transition-colors" />
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-300">

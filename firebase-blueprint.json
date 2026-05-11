@@ -60,6 +60,20 @@
         "quantity": { "type": "number" },
         "minQuantity": { "type": "number" }
       }
+    },
+    "OperatorAbsence": {
+      "title": "Operator Absence",
+      "description": "Information about operator leaves, vacations, or absences.",
+      "type": "object",
+      "properties": {
+        "operatorId": { "type": "string" },
+        "operatorName": { "type": "string" },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "reason": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["operatorId", "startDate", "endDate", "reason"]
     }
   },
   "firestore": {
@@ -82,6 +96,10 @@
     "/parts_inventory/{partId}": {
       "schema": "InventoryPart",
       "description": "Spare parts stock."
+    },
+    "/operator_absences/{absenceId}": {
+      "schema": "OperatorAbsence",
+      "description": "Operator absence records."
     }
   }
 }

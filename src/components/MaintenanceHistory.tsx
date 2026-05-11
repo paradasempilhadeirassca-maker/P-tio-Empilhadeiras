@@ -15,7 +15,7 @@ import { MaintenanceStop, Forklift } from '../types';
 import { useAuth } from './Auth';
 import { useData } from './DataContext';
 import { History, Search, Filter, Loader2, ChevronDown } from 'lucide-react';
-import { formatDuration, cn } from '../lib/utils';
+import { cn, formatDuration, formatDateTime, formatDate, formatTime } from '../lib/utils';
 
 interface MaintenanceHistoryProps {
   role: 'operator' | 'mechanic' | 'manager';
@@ -200,13 +200,13 @@ export function MaintenanceHistory({ role }: MaintenanceHistoryProps) {
                       )}
                     </td>
                     <td className="px-6 py-4 text-[11px] text-slate-500 leading-tight">
-                      {new Date(h.stopTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                      {formatDateTime(h.stopTime)}
                     </td>
                     <td className="px-6 py-4 text-[11px] text-slate-500 leading-tight">
-                      {h.startTime ? new Date(h.startTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
+                      {h.startTime ? formatDateTime(h.startTime) : '-'}
                     </td>
                     <td className="px-6 py-4 text-[11px] text-slate-500 leading-tight">
-                      {h.endTime ? new Date(h.endTime).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
+                      {h.endTime ? formatDateTime(h.endTime) : '-'}
                     </td>
                     <td className="px-6 py-4 text-sm font-mono font-bold text-slate-700">
                       {formatDuration(totalStopDuration)}
@@ -303,8 +303,8 @@ export function MaintenanceHistory({ role }: MaintenanceHistoryProps) {
                 )}
 
                 <div className="pt-4 border-t border-slate-50 flex justify-between text-[10px] text-slate-400 font-medium">
-                  <span>Parada: {new Date(h.stopTime).toLocaleDateString()}</span>
-                  <span>Fim: {h.endTime ? new Date(h.endTime).toLocaleDateString() : '-'}</span>
+                  <span>Parada: {formatDate(h.stopTime)}</span>
+                  <span>Fim: {h.endTime ? formatDate(h.endTime) : '-'}</span>
                 </div>
               </div>
             );
