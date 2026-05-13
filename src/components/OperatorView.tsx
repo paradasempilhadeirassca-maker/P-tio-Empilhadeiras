@@ -49,8 +49,8 @@ export function OperatorView({ mode = 'full' }: OperatorViewProps) {
     e.preventDefault();
     if (!selectedForklift || !profile) return;
 
-    const isActiveStop = activeStops.some(s => s.forkliftId === selectedForklift);
-    if (isActiveStop) {
+    const activeHighStop = activeStops.find(s => s.forkliftId === selectedForklift && s.severity === 'high');
+    if (activeHighStop) {
       showToast('Esta máquina está em PARADA CRÍTICA. Não é possível registrar novas ocorrências até o reparo.', 'error');
       return;
     }
@@ -290,10 +290,13 @@ export function OperatorView({ mode = 'full' }: OperatorViewProps) {
               >
                 <option value="">Selecione uma Frota</option>
                 {fleetList.map(f => {
-                  const hasActive = activeStops.some(s => s.forkliftId === f.id);
+                  const activeStop = activeStops.find(s => s.forkliftId === f.id);
+                  const label = activeStop 
+                    ? (activeStop.severity === 'high' ? '(PARADA)' : '(REPARO)')
+                    : '';
                   return (
                     <option key={f.id} value={f.id}>
-                      {f.serialNumber} - {f.model} {hasActive ? '(OCORRÊNCIA ATIVA)' : ''}
+                      {f.serialNumber} - {f.model} {label}
                     </option>
                   );
                 })}

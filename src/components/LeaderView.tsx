@@ -225,10 +225,13 @@ export function LeaderView() {
 
   const availableForkliftsList = useMemo(() => {
     return uniqueForklifts.filter(f => 
+      f.status !== 'stopped' && 
+      f.status !== 'maintenance' && 
       f.status !== 'interdicted' && 
-      f.status !== 'external'
+      f.status !== 'external' &&
+      !busyForkliftIds.has(f.id)
     );
-  }, [uniqueForklifts]);
+  }, [uniqueForklifts, busyForkliftIds]);
 
   const busyOperatorIds = useMemo(() => {
     const active = new Set<string>();
@@ -1209,14 +1212,16 @@ export function LeaderView() {
                         >
                           <option value="">Escolha uma...</option>
                           {uniqueForklifts.filter(f => 
+                            f.status !== 'stopped' && 
+                            f.status !== 'maintenance' && 
                             f.status !== 'interdicted' && 
                             f.status !== 'external'
                           ).map(f => {
                             const isBusy = busyForkliftIds.has(f.id);
-                            const hasOccurrence = f.status === 'stopped' || f.status === 'maintenance' || f.status === 'at_risk';
+                            const isAtRisk = f.status === 'at_risk';
                             return (
                               <option key={f.id} value={f.id}>
-                                {f.serialNumber} - {f.model} • {isBusy ? 'EM OPERAÇÃO' : hasOccurrence ? 'COM OCORRÊNCIA' : 'DISPONÍVEL'}
+                                {f.serialNumber} - {f.model} • {isBusy ? 'EM OPERAÇÃO' : isAtRisk ? 'DISPONÍVEL (C/ REPARO)' : 'DISPONÍVEL'}
                               </option>
                             );
                           })}
@@ -1423,10 +1428,13 @@ export function LeaderView() {
                       >
                       <option value="">Selecione a Empilhadeira</option>
                       {uniqueForklifts.map(f => {
-                        const hasActive = activeStops.some(s => s.forkliftId === f.id);
+                        const activeStop = activeStops.find(s => s.forkliftId === f.id);
+                        const label = activeStop 
+                          ? (activeStop.severity === 'high' ? '(PARADA)' : '(REPARO)')
+                          : '';
                         return (
                           <option key={f.id} value={f.id}>
-                            {f.serialNumber} - {f.model} {hasActive ? '(OCORRÊNCIA ATIVA)' : ''}
+                            {f.serialNumber} - {f.model} {label}
                           </option>
                         );
                       })}
