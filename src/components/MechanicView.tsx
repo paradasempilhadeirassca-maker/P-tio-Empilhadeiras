@@ -4,7 +4,7 @@ import { db } from '../firebase';
 import { useAuth } from './Auth';
 import { useToast } from './ToastContext';
 import { useData } from './DataContext';
-import { Forklift, MaintenanceStop, Part, InventoryPart, OccurrenceSeverity } from '../types';
+import { Forklift, MaintenanceStop, Part, InventoryPart, OccurrenceSeverity, ForkliftStatus } from '../types';
 import { 
   Wrench, 
   Play, 
@@ -234,6 +234,7 @@ export function MechanicView() {
       const endTime = new Date().toISOString();
       const batch = Firestore.writeBatch(db);
 
+      // Inventory deduction logic
       for (const part of parts) {
         if (part.inventoryPartId) {
           const partRef = Firestore.doc(db, 'parts_inventory', part.inventoryPartId);
@@ -265,8 +266,26 @@ export function MechanicView() {
         parts: parts
       });
 
+      // DETERMINING NEW STATUS
+      // Exclude current stop as it's completing
+      const otherStops = activeStops.filter(s => s.id !== stop.id && s.forkliftId === stop.forkliftId);
+      let targetStatus: ForkliftStatus = 'available';
+
+      if (otherStops.length > 0) {
+        const hasInProgress = otherStops.some(s => s.status === 'in_progress');
+        const hasHighSeverity = otherStops.some(s => (s.severity || 'high') === 'high' && s.status !== 'in_progress');
+        
+        if (hasInProgress) {
+          targetStatus = 'maintenance';
+        } else if (hasHighSeverity) {
+          targetStatus = 'stopped';
+        } else {
+          targetStatus = 'at_risk';
+        }
+      }
+
       batch.update(Firestore.doc(db, 'forklifts', stop.forkliftId), {
-        status: 'available',
+        status: targetStatus,
         lastMaintenance: endTime,
         lastHourMeter: Number(hourMeter),
         lastHourMeterUpdate: endTime
@@ -274,10 +293,10 @@ export function MechanicView() {
 
       await batch.commit();
 
-      // Update local state and cache right away for offline responsiveness
+      // Update local state
       const updatedStops = activeStops.filter(s => s.id !== stop.id);
       const updatedForklifts = forklifts.map(f =>
-        f.id === stop.forkliftId ? { ...f, status: 'available' as const, lastMaintenance: endTime, lastHourMeter: Number(hourMeter) } : f
+        f.id === stop.forkliftId ? { ...f, status: targetStatus, lastMaintenance: endTime, lastHourMeter: Number(hourMeter) } : f
       );
 
       setActiveStops(updatedStops);
@@ -326,8 +345,24 @@ export function MechanicView() {
         pendingPartsList: pieces.split(',').map(p => p.trim())
       });
 
+      // DETERMINING NEW STATUS
+      // Treat current stop as awaiting_parts (which maps to at_risk)
+      const otherStops = activeStops.filter(s => s.id !== stop.id && s.forkliftId === stop.forkliftId);
+      let targetStatus: ForkliftStatus = 'at_risk';
+
+      if (otherStops.length > 0) {
+        const hasInProgress = otherStops.some(s => s.status === 'in_progress');
+        const hasHighSeverity = otherStops.some(s => (s.severity || 'high') === 'high' && s.status !== 'in_progress');
+        
+        if (hasInProgress) {
+          targetStatus = 'maintenance';
+        } else if (hasHighSeverity) {
+          targetStatus = 'stopped';
+        }
+      }
+
       await Firestore.updateDoc(forkliftRef, {
-        status: 'stopped'
+        status: targetStatus
       });
 
       // Update local state immediately for offline responsiveness
@@ -336,7 +371,7 @@ export function MechanicView() {
         s.id === stop.id ? { ...s, status: 'awaiting_parts' as const, waitingPartsStartTime: nowIso, pendingPartsList: piecesList } : s
       );
       const updatedForklifts = forklifts.map(f =>
-        f.id === stop.forkliftId ? { ...f, status: 'stopped' as const } : f
+        f.id === stop.forkliftId ? { ...f, status: targetStatus } : f
       );
 
       setActiveStops(updatedStops);

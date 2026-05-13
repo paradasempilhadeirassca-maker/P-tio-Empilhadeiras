@@ -4,6 +4,7 @@
  */
 
 import { Forklift, Checklist, ShiftType, WeatherType, LowProductionReason } from '../types';
+import { formatNumber } from './utils';
 
 /**
  * Determines the current shift based on the time of day.
@@ -83,5 +84,5 @@ export function requiresPreventiveMaintenance(forklift: Forklift, thresholdHours
  */
 export function formatHourMeter(value?: number): string {
   if (value === undefined || value === null) return '---';
-  return value.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + 'h';
+  return formatNumber(value, 1) + 'h';
 }

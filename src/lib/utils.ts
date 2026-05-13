@@ -60,3 +60,20 @@ export function formatDateTime(dateVal: any): string {
     return '-';
   }
 }
+
+export function formatNumber(val: number, decimals: number = 0): string {
+  if (val === undefined || val === null || isNaN(val)) return '0';
+  const formatted = val.toLocaleString('pt-BR', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+    useGrouping: true
+  });
+  // Standardize thousands separator to dot. Some browsers use a space or thin space in pt-BR locale.
+  // We replace any whitespace character with a dot.
+  return formatted.replace(/\s|[\u00A0\u202F]/g, '.');
+}
+
+export function formatCurrency(val: number): string {
+  if (val === undefined || val === null || isNaN(val)) return 'R$ 0,00';
+  return `R$ ${formatNumber(val, 2)}`;
+}

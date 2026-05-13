@@ -97,12 +97,6 @@ export function LeaderView() {
 
   const [operatorSearch, setOperatorSearch] = useState('');
   
-  // Machines in maintenance/stopped shouldn't be selectable for operations in LeaderView
-  const leaderUniqueForklifts = useMemo(() => {
-    return uniqueForklifts
-      .filter(f => f.status !== 'stopped' && f.status !== 'maintenance');
-  }, [uniqueForklifts]);
-
   // Derived state: find the last event for the selected forklift to know its current status
   const uniqueOperators = useMemo(() => {
     const idMap = new Map<string, UserProfile>();
@@ -218,8 +212,10 @@ export function LeaderView() {
       if (!seenSet.has(event.forkliftId)) {
         seenSet.add(event.forkliftId);
         // Check if event is recent AND same shift to be considered busy
+        // IMPORTANT: occurrence action should NOT make a machine busy
         const eventTime = new Date(event.timestamp);
-        if (event.action !== 'stop' && event.shift === currentShift && eventTime > activeThreshold) {
+        const isBusyAction = event.action === 'start' || event.action === 'resume' || event.action === 'change';
+        if (isBusyAction && event.shift === currentShift && eventTime > activeThreshold) {
           active.add(event.forkliftId);
         }
       }
@@ -228,8 +224,11 @@ export function LeaderView() {
   }, [events]);
 
   const availableForkliftsList = useMemo(() => {
-    return uniqueForklifts.filter(f => !busyForkliftIds.has(f.id));
-  }, [uniqueForklifts, busyForkliftIds]);
+    return uniqueForklifts.filter(f => 
+      f.status !== 'interdicted' && 
+      f.status !== 'external'
+    );
+  }, [uniqueForklifts]);
 
   const busyOperatorIds = useMemo(() => {
     const active = new Set<string>();
@@ -245,10 +244,12 @@ export function LeaderView() {
 
       if (!seenSet.has(event.forkliftId)) {
         seenSet.add(event.forkliftId);
-        // Only consider operators as busy if the latest machine event is NOT a stop 
-        // AND it's from current shift AND it's within the threshold to avoid "ghost" busy status
+        // Only consider operators as busy if the latest machine event is a BUSY action
+        // (start, resume, change) AND same shift AND within threshold
         const eventTime = new Date(event.timestamp);
-        if (event.action !== 'stop' && event.shift === currentShift && eventTime > activeThreshold) {
+        const isBusyAction = event.action === 'start' || event.action === 'resume' || event.action === 'change';
+        
+        if (isBusyAction && event.shift === currentShift && eventTime > activeThreshold) {
           activeOps.push(...(event.operatorIds || []));
         }
       }
@@ -370,14 +371,19 @@ export function LeaderView() {
   useEffect(() => {
     if (lastForkliftEvent) {
       if (selectedOperatorIds.length === 0) {
-        const availablePrevious = (lastForkliftEvent.operatorIds || []).filter(id => !busyOperatorIds.has(id));
+        // If we are reporting an occurrence, we WANT the current busy operators
+        // If we are starting a new activity, we only want those who are NOT busy
+        const availablePrevious = (lastForkliftEvent.operatorIds || []).filter(id => {
+          if (activeTab === 'report_occurrence') return true;
+          return !busyOperatorIds.has(id);
+        });
         setSelectedOperatorIds(availablePrevious);
       }
       if (!operationType) {
         setOperationType(lastForkliftEvent.operationType);
       }
     }
-  }, [lastForkliftEvent, busyOperatorIds]);
+  }, [lastForkliftEvent, busyOperatorIds, activeTab]);
 
   const handleToggleOperator = (id: string) => {
     setSelectedOperatorIds(prev => 
@@ -487,14 +493,27 @@ export function LeaderView() {
         }
 
         let finalNewStatus: ForkliftStatus = 'available';
+        const currentForklift = uniqueForklifts.find(f => f.id === forkliftId);
+        const currentStatus = currentForklift?.status || 'available';
+
         if (finalAction === 'stop') {
           finalNewStatus = 'stopped';
         } else if (finalAction === 'occurrence') {
-          finalNewStatus = 'at_risk';
+          // If it's a stop (high severity), it should be 'stopped'
+          // If it's a repair/risk (low/medium), it should be 'at_risk' (remains available)
+          finalNewStatus = severity === 'high' ? 'stopped' : 'at_risk';
         }
 
         if (!forkliftId.startsWith('global_')) {
-          await updateDoc(doc(db, 'forklifts', forkliftId), { status: finalNewStatus });
+          // Status Priority logic: only update if moving to a more restrictive state 
+          // or if the current state is not more restrictive than the new one.
+          const statusPriority = { available: 1, at_risk: 2, maintenance: 3, stopped: 4, interdicted: 5, external: 5, standby: 1, reserva: 1 };
+          const shouldUpdateStatus = (statusPriority[finalNewStatus] || 0) > (statusPriority[currentStatus] || 0);
+
+          if (shouldUpdateStatus) {
+            await updateDoc(doc(db, 'forklifts', forkliftId), { status: finalNewStatus });
+          }
+
           if (finalAction === 'occurrence') {
             await addDoc(collection(db, 'maintenance'), {
               forkliftId,
@@ -876,7 +895,17 @@ export function LeaderView() {
         <div className="max-w-7xl mx-auto p-4 md:p-8">
           {activeTab === 'fleet' && (
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <FleetManagement />
+              <FleetManagement 
+                onReportOccurrence={(f) => {
+                  setSelectedForkliftId(f.id);
+                  // Try to find last operators for this machine to auto-fill
+                  const lastEv = events.find(e => e.forkliftId === f.id);
+                  if (lastEv?.operatorIds) {
+                    setSelectedOperatorIds(lastEv.operatorIds);
+                  }
+                  setActiveTab('report_occurrence');
+                }}
+              />
             </div>
           )}
 
@@ -1097,6 +1126,16 @@ export function LeaderView() {
                                 <div className="flex items-center gap-2">
                                   <button
                                     onClick={() => {
+                                      setSelectedForkliftId(activeOp.forkliftId);
+                                      setSelectedOperatorIds(activeOp.operatorIds);
+                                      setActiveTab('report_occurrence');
+                                    }}
+                                    className="w-9 h-9 md:w-10 md:h-10 bg-white border border-slate-200 text-slate-400 rounded-lg flex items-center justify-center hover:text-orange-600 hover:border-orange-200 transition-all"
+                                  >
+                                    <AlertTriangle className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => {
                                       setActiveModalForkliftId(activeOp.forkliftId);
                                       setPendingAction('change');
                                       setShowProductionModal(true);
@@ -1169,9 +1208,18 @@ export function LeaderView() {
                           onChange={(e) => setSelectedForkliftId(e.target.value)}
                         >
                           <option value="">Escolha uma...</option>
-                          {uniqueForklifts.filter(f => !busyForkliftIds.has(f.id)).map(f => (
-                            <option key={f.id} value={f.id}>{f.model} • {f.serialNumber}</option>
-                          ))}
+                          {uniqueForklifts.filter(f => 
+                            f.status !== 'interdicted' && 
+                            f.status !== 'external'
+                          ).map(f => {
+                            const isBusy = busyForkliftIds.has(f.id);
+                            const hasOccurrence = f.status === 'stopped' || f.status === 'maintenance' || f.status === 'at_risk';
+                            return (
+                              <option key={f.id} value={f.id}>
+                                {f.serialNumber} - {f.model} • {isBusy ? 'EM OPERAÇÃO' : hasOccurrence ? 'COM OCORRÊNCIA' : 'DISPONÍVEL'}
+                              </option>
+                            );
+                          })}
                         </select>
                       </div>
 
@@ -1274,32 +1322,66 @@ export function LeaderView() {
                     </div>
 
                     <div className="grid grid-cols-1 gap-2 mb-6">
-                      {[
-                        { id: 'tirar_producao', label: 'Tirar Produção', icon: <Package className="w-4 h-4" />, bg: 'bg-emerald-500' },
-                        { id: 'quebra', label: 'Quebra / Retrabalho', icon: <Layers className="w-4 h-4" />, bg: 'bg-blue-500' },
-                        { id: 'emblocamento', label: 'Emblocamento', icon: <BoxSelect className="w-4 h-4" />, bg: 'bg-purple-500' },
-                        { id: 'carregamento', label: 'Carregamento', icon: <Truck className="w-4 h-4" />, bg: 'bg-amber-500' }
-                      ].map((item) => (
-                        <button
-                          key={item.id}
-                          onClick={() => {
-                            setAssigningToOp(item.id as AppOperationType);
-                            setQuickLinkForklift(null);
-                          }}
-                          className="flex items-center justify-between p-4 bg-slate-50 hover:bg-white border border-slate-100 hover:border-slate-300 hover:shadow-lg hover:shadow-slate-200/40 rounded-2xl transition-all group"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className={cn(
-                              "w-8 h-8 rounded-lg flex items-center justify-center text-white shadow-sm",
-                              item.bg
-                            )}>
-                              {item.icon}
+                      {quickLinkForklift.status === 'stopped' || quickLinkForklift.status === 'maintenance' ? (
+                        <div className="p-4 bg-red-50 border border-red-100 rounded-2xl mb-2">
+                          <p className="text-[10px] font-black text-red-600 uppercase text-center">
+                            Máquina em Parada Crítica ou Manutenção
+                          </p>
+                          <p className="text-[9px] font-medium text-red-500 text-center mt-1">
+                            Atividades de produção bloqueadas
+                          </p>
+                        </div>
+                      ) : (
+                        [
+                          { id: 'tirar_producao', label: 'Tirar Produção', icon: <Package className="w-4 h-4" />, bg: 'bg-emerald-500' },
+                          { id: 'quebra', label: 'Quebra / Retrabalho', icon: <Layers className="w-4 h-4" />, bg: 'bg-blue-500' },
+                          { id: 'emblocamento', label: 'Emblocamento', icon: <BoxSelect className="w-4 h-4" />, bg: 'bg-purple-500' },
+                          { id: 'carregamento', label: 'Carregamento', icon: <Truck className="w-4 h-4" />, bg: 'bg-amber-500' }
+                        ].map((item) => (
+                          <button
+                            key={item.id}
+                            onClick={() => {
+                              setAssigningToOp(item.id as AppOperationType);
+                              setQuickLinkForklift(null);
+                            }}
+                            className="flex items-center justify-between p-4 bg-slate-50 hover:bg-white border border-slate-100 hover:border-slate-300 hover:shadow-lg hover:shadow-slate-200/40 rounded-2xl transition-all group"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className={cn(
+                                "w-8 h-8 rounded-lg flex items-center justify-center text-white shadow-sm",
+                                item.bg
+                              )}>
+                                {item.icon}
+                              </div>
+                              <span className="text-[10px] font-black text-slate-700 uppercase tracking-tight">{item.label}</span>
                             </div>
-                            <span className="text-[10px] font-black text-slate-700 uppercase tracking-tight">{item.label}</span>
+                            <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-500 transition-colors" />
+                          </button>
+                        ))
+                      )}
+
+                      {/* Add Occurrence option always available to quick link */}
+                      <button
+                        onClick={() => {
+                          setSelectedForkliftId(quickLinkForklift.id);
+                          // Auto set operators if machine was from available list
+                          const currentLastEvent = events.find(e => e.forkliftId === quickLinkForklift.id);
+                          if (currentLastEvent?.operatorIds) {
+                            setSelectedOperatorIds(currentLastEvent.operatorIds);
+                          }
+                          setActiveTab('report_occurrence');
+                          setQuickLinkForklift(null);
+                        }}
+                        className="flex items-center justify-between p-4 bg-orange-50 hover:bg-white border border-orange-100 hover:border-orange-300 hover:shadow-lg hover:shadow-orange-200/40 rounded-2xl transition-all group"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-orange-500 text-white shadow-sm">
+                            <AlertTriangle className="w-4 h-4" />
                           </div>
-                          <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-500 transition-colors" />
-                        </button>
-                      ))}
+                          <span className="text-[10px] font-black text-orange-700 uppercase tracking-tight">Relatar Problema / Ocorrência</span>
+                        </div>
+                        <ChevronRight className="w-4 h-4 text-orange-300 group-hover:text-orange-500 transition-colors" />
+                      </button>
                     </div>
 
                     <button
@@ -1331,15 +1413,23 @@ export function LeaderView() {
                 <div className="space-y-6">
                    <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 italic">Vínculo de Máquina</label>
-                    <select
-                      value={selectedForkliftId}
-                      onChange={(e) => setSelectedForkliftId(e.target.value)}
-                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold focus:ring-4 focus:ring-blue-500/10 outline-none transition-all appearance-none cursor-pointer"
-                    >
+                      <select
+                        value={selectedForkliftId}
+                        onChange={(e) => {
+                          setSelectedForkliftId(e.target.value);
+                          setSelectedOperatorIds([]); // Clear to trigger auto-selection for the newly selected machine
+                        }}
+                        className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold focus:ring-4 focus:ring-blue-500/10 outline-none transition-all appearance-none cursor-pointer"
+                      >
                       <option value="">Selecione a Empilhadeira</option>
-                      {uniqueForklifts.map(f => (
-                        <option key={f.id} value={f.id}>{f.model} • {f.serialNumber}</option>
-                      ))}
+                      {uniqueForklifts.map(f => {
+                        const hasActive = activeStops.some(s => s.forkliftId === f.id);
+                        return (
+                          <option key={f.id} value={f.id}>
+                            {f.serialNumber} - {f.model} {hasActive ? '(OCORRÊNCIA ATIVA)' : ''}
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
 
@@ -1441,12 +1531,21 @@ export function LeaderView() {
               <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden">
                 <div className="p-8 border-b border-slate-100 flex justify-between items-center">
                   <div>
-                    <h2 className="text-2xl font-black text-slate-900 tracking-tight">Ocorrências Ativas</h2>
-                    <p className="text-sm font-medium text-slate-500 italic">Equipamentos parados ou aguardando reparo</p>
-                  </div>
-                  <span className="bg-blue-600 text-white text-[10px] font-black px-4 py-2 rounded-xl">
-                    {activeStops.length} ATIVAS
-                  </span>
+                      <h2 className="text-2xl font-black text-slate-900 tracking-tight">Ocorrências Ativas</h2>
+                      <p className="text-sm font-medium text-slate-500 italic">Equipamentos parados ou aguardando reparo • v2.2</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button 
+                        onClick={() => setActiveTab('report_occurrence')}
+                        className="bg-orange-600 text-white text-[10px] font-black px-6 py-3 rounded-2xl shadow-lg shadow-orange-200 hover:bg-orange-700 transition-all flex items-center gap-2"
+                      >
+                        <AlertTriangle className="w-4 h-4" />
+                        NOVA OCORRÊNCIA
+                      </button>
+                      <span className="bg-blue-600 text-white text-[10px] font-black px-4 py-3 rounded-2xl shadow-lg shadow-blue-200">
+                        {activeStops.length} ATIVAS
+                      </span>
+                    </div>
                 </div>
                 <div className="divide-y divide-slate-100">
                   {activeStops.map(stop => {
@@ -1456,7 +1555,7 @@ export function LeaderView() {
                     
                     return (
                       <div key={stop.id} className={cn(
-                        "p-6 hover:bg-slate-50 transition-all flex flex-col md:flex-row md:items-center justify-between gap-4",
+                        "p-6 hover:bg-slate-50 transition-all flex flex-col lg:flex-row lg:items-center justify-between gap-4",
                         isAwaitingParts && "bg-amber-50/20"
                       )}>
                         <div className="flex items-center gap-4">
@@ -1475,7 +1574,7 @@ export function LeaderView() {
                                 "text-[10px] px-2 py-0.5 rounded-full font-black uppercase",
                                 stop.severity === 'high' ? "bg-red-50 text-red-600" : "bg-amber-50 text-amber-600"
                               )}>
-                                {stop.severity === 'high' ? 'Parada Crítica' : 'Atenção'}
+                                {stop.severity === 'high' ? 'Parada Crítica' : 'Intervenção / Atendimento'}
                               </span>
                             </div>
                             <p className="text-xs text-slate-600 font-medium italic mt-1 leading-tight">
@@ -1490,24 +1589,36 @@ export function LeaderView() {
                             </p>
                           </div>
                         </div>
-                        <div className="flex flex-col items-end gap-2">
+                        <div className="flex flex-col sm:flex-row items-center gap-3 shrink-0">
+                           <button
+                             onClick={() => {
+                               const targetId = forklift?.id || stop.forkliftId;
+                               if (targetId) {
+                                 setSelectedForkliftId(targetId);
+                                 // Fill with current stop's operator if possible
+                                 const stopOp = operators.find(o => o.displayName === stop.operatorName || o.email === stop.operatorName);
+                                 if (stopOp) {
+                                   setSelectedOperatorIds([stopOp.uid]);
+                                 }
+                                 setActiveTab('report_occurrence');
+                               }
+                             }}
+                             className="w-full sm:w-auto px-6 py-4 bg-orange-600 text-white hover:bg-orange-700 rounded-2xl transition-all flex items-center justify-center gap-2 shadow-xl shadow-orange-200 ring-2 ring-orange-500/20 active:scale-95"
+                           >
+                             <AlertTriangle className="w-5 h-5 shrink-0" />
+                             <span className="text-xs font-black uppercase whitespace-nowrap tracking-wide">Relatar Novo Problema</span>
+                           </button>
+
                            <div className={cn(
-                             "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest",
-                             isAwaitingParts ? "bg-amber-600 text-white" :
-                             stop.status === 'in_progress' ? "bg-blue-500 text-white" :
-                             "bg-slate-100 text-slate-400"
+                             "w-full sm:w-auto px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest min-w-[160px] text-center border-2",
+                             isAwaitingParts ? "bg-amber-600 text-white border-amber-400 shadow-lg shadow-amber-100" :
+                             stop.status === 'in_progress' ? "bg-blue-500 text-white border-blue-400 shadow-lg shadow-blue-100" :
+                             "bg-slate-50 text-slate-500 border-slate-200"
                            )}>
                              {isAwaitingParts ? 'Aguardando Peça' : 
-                              stop.status === 'in_progress' ? 'Em Manutenção' : 
-                              'Aguardando Mecânico'}
+                               stop.status === 'in_progress' ? 'Em Manutenção' : 
+                               'Aguardando Mecânico'}
                            </div>
-                           {isAwaitingParts && stop.pendingPartsList && (
-                             <div className="flex flex-wrap justify-end gap-1 max-w-[200px]">
-                               {stop.pendingPartsList.map((p, i) => (
-                                 <span key={i} className="text-[8px] font-black bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded uppercase">{p}</span>
-                               ))}
-                             </div>
-                           )}
                         </div>
                       </div>
                     );

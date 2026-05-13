@@ -13,11 +13,11 @@ import { useAuth } from './Auth';
 import { useToast } from './ToastContext';
 import { useData } from './DataContext';
 import { MaintenanceStop, Forklift, ForkliftStatus } from '../types';
-import { Clock, AlertTriangle, Ban, AlertCircle, Wrench, CheckCircle2, Timer, PauseCircle, Search, History as HistoryIcon } from 'lucide-react';
+import { Clock, AlertTriangle, Ban, AlertCircle, Wrench, CheckCircle2, Timer, PauseCircle, Search, History as HistoryIcon, PlusCircle } from 'lucide-react';
 import { cn, formatDuration, formatDate, formatTime, formatDateTime } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/firebaseUtils';
 
-export function ActiveMachinesView() {
+export function ActiveMachinesView({ onNavigate }: { onNavigate?: (view: string) => void }) {
   const { profile, loading: authLoading, setQuotaExceeded } = useAuth();
   const { showToast } = useToast();
   const { forklifts, activeStops, refreshGlobalData, loading: dataLoading } = useData();
@@ -55,10 +55,22 @@ export function ActiveMachinesView() {
       if (f?.serialNumber) {
         const serial = f.serialNumber.trim().toLowerCase();
         const severity = stop.severity || 'high';
-        const targetStatus: ForkliftStatus = severity === 'high' ? 'stopped' : 'maintenance';
+        const stopStatus = stop.status || 'pending';
+        
+        let targetStatus: ForkliftStatus = 'available';
+
+        if (stopStatus === 'in_progress') {
+          targetStatus = 'maintenance';
+        } else if (severity === 'high') {
+          targetStatus = 'stopped';
+        } else if (severity === 'medium' || severity === 'low' || stopStatus === 'awaiting_parts') {
+          targetStatus = 'at_risk';
+        }
         
         const existingStatus = machineStatusMap.get(serial);
-        if (!existingStatus || (existingStatus === 'maintenance' && targetStatus === 'stopped')) {
+        // Priority: maintenance > stopped > at_risk > available
+        const priority = { maintenance: 4, stopped: 3, at_risk: 2, available: 1, interdicted: 5, external: 5 };
+        if (!existingStatus || (priority[targetStatus as keyof typeof priority] || 0) > (priority[existingStatus as keyof typeof priority] || 0)) {
           machineStatusMap.set(serial, targetStatus);
         }
       }
@@ -255,6 +267,16 @@ export function ActiveMachinesView() {
                 Wait: {formatDuration(partsWaitingTotal)}
               </span>
             )}
+            
+            {onNavigate && (
+              <button
+                onClick={() => onNavigate('op-register')}
+                className="mt-2 flex items-center justify-center gap-1.5 px-3 py-2 bg-slate-100 text-slate-600 rounded-xl text-[9px] font-black uppercase tracking-wider hover:bg-blue-600 hover:text-white transition-all group/btn"
+              >
+                <PlusCircle className="w-3.5 h-3.5 group-hover/btn:rotate-90 transition-transform" />
+                Relatar Novo Problema
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -281,11 +303,21 @@ export function ActiveMachinesView() {
                <AlertTriangle className="w-8 h-8 text-amber-400" />
             </div>
             <div>
-              <h1 className="text-3xl font-black text-slate-900 tracking-tight leading-none">Ocorrências Ativas</h1>
+              <h1 className="text-3xl font-black text-slate-900 tracking-tight leading-none">Ocorrências Ativas v2.2</h1>
               <p className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1">Gestão de prioridade e tempo de resposta</p>
             </div>
           </div>
         </div>
+        
+        {onNavigate && (
+          <button
+            onClick={() => onNavigate('op-register')}
+            className="bg-blue-600 text-white px-6 py-4 rounded-[1.25rem] font-black text-sm uppercase tracking-widest hover:bg-blue-700 transition-all flex items-center gap-2 shadow-xl shadow-blue-100 whitespace-nowrap"
+          >
+            <PlusCircle className="w-5 h-5" />
+            NOVA OCORRÊNCIA
+          </button>
+        )}
       </header>
 
       {/* Analytical Top Cards */}

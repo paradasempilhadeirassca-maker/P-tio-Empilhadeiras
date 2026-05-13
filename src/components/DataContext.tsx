@@ -50,10 +50,34 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       if (f?.serialNumber) {
         const serial = f.serialNumber.trim().toLowerCase();
         const severity = stop.severity || 'high';
-        const targetStatus: ForkliftStatus = severity === 'high' ? 'stopped' : 'maintenance';
+        const stopStatus = stop.status || 'pending';
         
+        let targetStatus: ForkliftStatus = 'available';
+
+        if (stopStatus === 'in_progress') {
+          targetStatus = 'maintenance';
+        } else if (severity === 'high') {
+          targetStatus = 'stopped';
+        } else if (severity === 'medium' || severity === 'low' || stopStatus === 'awaiting_parts') {
+          targetStatus = 'at_risk';
+        }
+
         const existingStatus = machineStatusMap.get(serial);
-        if (!existingStatus || (existingStatus === 'maintenance' && targetStatus === 'stopped')) {
+        
+        // Priority: maintenance > stopped > at_risk > available
+        // Note: maintenance and stopped are both "unavailable", but maintenance implies worker active.
+        const statusPriority = { 
+          maintenance: 4, 
+          stopped: 3, 
+          at_risk: 2, 
+          available: 1, 
+          interdicted: 5, 
+          external: 5,
+          standby: 1,
+          reserva: 1
+        };
+
+        if (!existingStatus || (statusPriority[targetStatus as keyof typeof statusPriority] || 0) > (statusPriority[existingStatus as keyof typeof statusPriority] || 0)) {
           machineStatusMap.set(serial, targetStatus);
         }
       }

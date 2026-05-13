@@ -94,7 +94,7 @@ function AppContent() {
     switch (activeView) {
       case 'dashboard': return <ManagerDashboard />;
       case 'op-register': return <OperatorView mode="register" />;
-      case 'op-active': return <ActiveMachinesView />;
+      case 'op-active': return <ActiveMachinesView onNavigate={setActiveView} />;
       case 'mech-orders': return <MechanicView />;
       case 'mech-preventive': return <PreventiveView />;
       case 'parts-inventory': return <PartsInventory />;

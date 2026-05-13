@@ -229,7 +229,6 @@ export function OperatorView({ mode = 'full' }: OperatorViewProps) {
 
     // We only want machines that are actually operational
     return Array.from(fleetMap.values())
-      .filter(f => f.status !== 'stopped' && f.status !== 'maintenance')
       .sort((a, b) => (a.serialNumber || '').localeCompare(b.serialNumber || ''));
   }, [forklifts, activeStops]);
 
@@ -290,9 +289,14 @@ export function OperatorView({ mode = 'full' }: OperatorViewProps) {
                 required
               >
                 <option value="">Selecione uma Frota</option>
-                {fleetList.map(f => (
-                  <option key={f.id} value={f.id}>{f.model} {f.serialNumber}</option>
-                ))}
+                {fleetList.map(f => {
+                  const hasActive = activeStops.some(s => s.forkliftId === f.id);
+                  return (
+                    <option key={f.id} value={f.id}>
+                      {f.serialNumber} - {f.model} {hasActive ? '(OCORRÊNCIA ATIVA)' : ''}
+                    </option>
+                  );
+                })}
               </select>
             </div>
             <div>

@@ -42,7 +42,7 @@ import {
   Area,
 } from 'recharts';
 import { TrendingUp, Clock, Activity, AlertTriangle, Users, Package, Calendar, Filter, Bell, ClipboardCheck, Watch, Layers, BoxSelect, Truck, CloudRain, Info, ArrowLeft, Target, Settings2, Plus, Save, X, Trash2, History as HistoryIcon, Wrench, ShieldAlert, BarChart3, ChevronRight, UserMinus, UserCheck, Timer, Footprints } from 'lucide-react';
-import { cn, formatDuration, formatDate, formatTime, formatDateTime } from '../lib/utils';
+import { cn, formatDuration, formatDate, formatTime, formatDateTime, formatCurrency, formatNumber } from '../lib/utils';
 import { calculateOperatorEfficiency } from '../lib/operationalLogic';
 import { sendWhatsAppNotification, sendLocalNotification } from '../lib/notifications';
 
@@ -2420,7 +2420,7 @@ export function ManagerDashboard() {
                       </div>
                       <div className="text-right">
                          <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Custo Est. YTD</p>
-                         <p className="text-xs font-black text-slate-900">R$ {estCost.toLocaleString()}</p>
+                         <p className="text-xs font-black text-slate-900">{formatCurrency(estCost)}</p>
                       </div>
                     </div>
                   </div>

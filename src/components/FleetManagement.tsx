@@ -41,7 +41,7 @@ import { ptBR } from 'date-fns/locale';
 import { cn } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/firebaseUtils';
 
-export function FleetManagement() {
+export function FleetManagement({ onReportOccurrence }: { onReportOccurrence?: (forklift: Forklift) => void }) {
   const { setQuotaExceeded } = useAuth();
   const { showToast } = useToast();
   const { forklifts, uniqueForklifts, operators, activeStops, refreshGlobalData, loading: dataLoading } = useData();
@@ -193,7 +193,7 @@ export function FleetManagement() {
 
   const stats = useMemo(() => {
     const total = uniqueForklifts.length;
-    const operational = uniqueForklifts.filter(f => f.status === 'available').length;
+    const operational = uniqueForklifts.filter(f => f.status === 'available' || f.status === 'at_risk').length;
     const inMaintenance = uniqueForklifts.filter(f => f.status === 'maintenance' || f.status === 'stopped').length;
     const preventiveOverdue = uniqueForklifts.filter(f => getMaintenanceStatus(f.lastHourMeter || 0, f.nextPreventiveHorometer || 0) === 'vencida').length;
     
@@ -374,6 +374,15 @@ export function FleetManagement() {
                       </div>
                     </div>
                     <div className="flex gap-2">
+                       {onReportOccurrence && (
+                         <button 
+                           onClick={() => onReportOccurrence(f)}
+                           className="p-2 text-slate-400 hover:text-orange-500 hover:bg-orange-50 rounded-xl transition-all"
+                           title="Registrar Ocorrência"
+                         >
+                           <AlertTriangle className="w-4 h-4" />
+                         </button>
+                       )}
                        <button 
                         onClick={() => handleDeleteMachine(f.id)}
                         className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
