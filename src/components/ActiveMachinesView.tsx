@@ -51,7 +51,10 @@ export function ActiveMachinesView({ onNavigate }: { onNavigate?: (view: string)
     // Determine which machines have active maintenance occurrences
     const machineStatusMap = new Map<string, ForkliftStatus>();
     activeStops.forEach(stop => {
-      const f = forklifts.find(fork => fork.id === stop.forkliftId);
+      const f = forklifts.find(fork => 
+        fork.id === stop.forkliftId || 
+        (fork.serialNumber && stop.forkliftId && fork.serialNumber.trim().toLowerCase() === stop.forkliftId.trim().toLowerCase())
+      );
       if (f?.serialNumber) {
         const serial = f.serialNumber.trim().toLowerCase();
         const severity = stop.severity || 'high';
@@ -131,7 +134,10 @@ export function ActiveMachinesView({ onNavigate }: { onNavigate?: (view: string)
 
   function renderOccurrenceCard(stop: MaintenanceStop) {
     // First try finding the specific machine by ID
-    const directForklift = forklifts.find(f => f.id === stop.forkliftId);
+    const directForklift = forklifts.find(f => 
+      f.id === stop.forkliftId || 
+      (f.serialNumber && stop.forkliftId && f.serialNumber.trim().toLowerCase() === stop.forkliftId.trim().toLowerCase())
+    );
     
     // Then get the consolidated version using serial number (or ID as fallback)
     const key = (directForklift?.serialNumber || '').trim().toLowerCase() || stop.forkliftId;

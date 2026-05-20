@@ -20,7 +20,9 @@ import {
   Lock,
   X,
   Info,
-  Save
+  Save,
+  Trash2,
+  Plus
 } from 'lucide-react';
 import { 
   collection, 
@@ -30,7 +32,8 @@ import {
   doc,
   updateDoc,
   deleteDoc,
-  where
+  where,
+  addDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { cn } from '../lib/utils';
@@ -56,12 +59,62 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isChangingPass, setIsChangingPass] = useState(false);
   const [passError, setPassError] = useState('');
-  const [activeTab, setActiveTab] = useState<'profile' | 'system' | 'goals'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'system' | 'goals' | 'mechanics'>('profile');
   const [isResetting, setIsResetting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetStatus, setResetStatus] = useState<{ type: 'success' | 'error' | null, message: string }>({ type: null, message: '' });
   const [editingGoal, setEditingGoal] = useState<{ operationType: string, shift: '1' | '2', value: string } | null>(null);
-  const { goals: operationGoals } = useData();
+  
+  // Mechanic presence/absence (pointing) states
+  const [selectedMechanicId, setSelectedMechanicId] = useState<string>('');
+  const [absenceStartDate, setAbsenceStartDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [absenceEndDate, setAbsenceEndDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [absenceNotes, setAbsenceNotes] = useState<string>('');
+  const [isLoggingAbsence, setIsLoggingAbsence] = useState<boolean>(false);
+
+  const { goals: operationGoals, mechanics, absences } = useData();
+
+  const handleAddAbsence = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedMechanicId) return;
+    
+    const mech = mechanics.find(u => u.uid === selectedMechanicId);
+    if (!mech) return;
+
+    setIsLoggingAbsence(true);
+    try {
+      const newAbsence = {
+        operatorId: selectedMechanicId,
+        operatorName: mech.displayName || mech.email,
+        startDate: absenceStartDate,
+        endDate: absenceEndDate,
+        reason: 'Indisponibilidade',
+        role: 'mechanic',
+        sector: mech.sector || 'Geral',
+        notes: absenceNotes || '',
+        createdAt: new Date().toISOString()
+      };
+      
+      await addDoc(collection(db, 'operator_absences'), newAbsence);
+      alert("Indisponibilidade de mecânico registrada com sucesso!");
+      setAbsenceNotes('');
+    } catch (err: any) {
+      console.error("Error creating absence:", err);
+      alert("Erro ao salvar: " + err.message);
+    } finally {
+      setIsLoggingAbsence(false);
+    }
+  };
+
+  const handleDeleteAbsence = async (absenceId: string) => {
+    if (!confirm("Tem certeza que deseja remover esta indisponibilidade de mecânico?")) return;
+    try {
+      await deleteDoc(doc(db, 'operator_absences', absenceId));
+    } catch (err: any) {
+      console.error("Error deleting absence:", err);
+      alert("Erro ao remover: " + err.message);
+    }
+  };
 
   const handleUpdateGoal = async () => {
     if (!editingGoal) return;
@@ -374,13 +427,13 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
                     Meu Perfil
                   </button>
                   <button
-                    onClick={() => setActiveTab('system')}
+                    onClick={() => setActiveTab('mechanics')}
                     className={cn(
                       "flex-1 py-3 text-xs font-black uppercase tracking-widest rounded-xl transition-all",
-                      activeTab === 'system' ? "bg-white text-red-600 shadow-sm" : "text-slate-400 hover:text-slate-600"
+                      activeTab === 'mechanics' ? "bg-white text-blue-600 shadow-sm" : "text-slate-400 hover:text-slate-600"
                     )}
                   >
-                    Sistema
+                    Mecânicos
                   </button>
                   <button
                     onClick={() => setActiveTab('goals')}
@@ -390,6 +443,15 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
                     )}
                   >
                     Metas
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('system')}
+                    className={cn(
+                      "flex-1 py-3 text-xs font-black uppercase tracking-widest rounded-xl transition-all",
+                      activeTab === 'system' ? "bg-white text-red-600 shadow-sm" : "text-slate-400 hover:text-slate-600"
+                    )}
+                  >
+                    Sistema
                   </button>
                 </div>
               )}
@@ -453,6 +515,130 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
                         {isChangingPass ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Confirmar Alteração'}
                       </button>
                     </form>
+                  </div>
+                ) : activeTab === 'mechanics' ? (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Wrench className="w-5 h-5 text-blue-600" />
+                      <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Escala / Indisponibilidade dos Mecânicos</h3>
+                    </div>
+                    
+                    <p className="text-xs text-slate-500 font-semibold leading-relaxed">
+                      Registre períodos de folga, férias ou indisponibilidade dos mecânicos para planejamento e indicadores de capacidade.
+                    </p>
+
+                    <form onSubmit={handleAddAbsence} className="space-y-4 bg-slate-50 p-5 rounded-3xl border border-slate-200">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Mecânico *</label>
+                        <select
+                          required
+                          value={selectedMechanicId}
+                          onChange={(e) => setSelectedMechanicId(e.target.value)}
+                          className="w-full px-4 py-3 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 transition-all font-semibold text-xs"
+                        >
+                          <option value="">-- Escolha um mecânico --</option>
+                          {mechanics.map(m => (
+                            <option key={m.uid} value={m.uid}>{m.displayName || m.email}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Data de Início *</label>
+                          <input
+                            type="date"
+                            required
+                            value={absenceStartDate}
+                            onChange={(e) => setAbsenceStartDate(e.target.value)}
+                            className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 transition-all font-semibold text-xs text-slate-700"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Data de Término *</label>
+                          <input
+                            type="date"
+                            required
+                            value={absenceEndDate}
+                            onChange={(e) => setAbsenceEndDate(e.target.value)}
+                            className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 transition-all font-semibold text-xs text-slate-700"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Observações / Detalhes</label>
+                        <textarea
+                          value={absenceNotes}
+                          onChange={(e) => setAbsenceNotes(e.target.value)}
+                          placeholder="Ex: Folga, Licença médica, férias, etc."
+                          rows={2}
+                          className="w-full px-4 py-3 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 transition-all font-semibold text-xs resize-none"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isLoggingAbsence || !selectedMechanicId}
+                        className="w-full bg-blue-600 text-white py-3.5 rounded-[1.25rem] font-bold text-xs hover:bg-blue-700 transition-all active:scale-95 disabled:bg-slate-300 disabled:text-slate-400 flex items-center justify-center gap-2 mt-2 cursor-pointer shadow-sm hover:shadow"
+                      >
+                        <Save className="w-4 h-4" />
+                        {isLoggingAbsence ? "Salvando..." : "Registrar Indisponibilidade"}
+                      </button>
+                    </form>
+
+                    <div className="pt-4 border-t border-slate-100">
+                      <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest mb-3 flex items-center gap-1.5 font-bold">
+                        Histórico de Ausências da Equipe
+                      </h4>
+                      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+                        <div className="max-h-[220px] overflow-y-auto custom-scrollbar">
+                          <table className="w-full text-left border-collapse">
+                            <thead>
+                              <tr className="bg-slate-50 border-b border-slate-100 text-[9px] text-slate-400 font-extrabold uppercase tracking-widest">
+                                <th className="p-3">Mecânico</th>
+                                <th className="p-3">Período</th>
+                                <th className="p-3 text-right">Ação</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-50 text-xs">
+                              {absences.filter(a => a.role === 'mechanic')
+                                .sort((a,b) => b.startDate.localeCompare(a.startDate))
+                                .map(abs => (
+                                  <tr key={abs.id} className="hover:bg-slate-50/50 transition-colors">
+                                    <td className="p-3 font-extrabold text-slate-900">
+                                      {abs.operatorName}
+                                      {abs.notes && <p className="text-[10px] text-slate-400 font-normal mt-0.5 normal-case">{abs.notes}</p>}
+                                    </td>
+                                    <td className="p-3 text-slate-500 font-semibold text-[11px]">
+                                      {abs.startDate === abs.endDate 
+                                        ? abs.startDate 
+                                        : `${abs.startDate} a ${abs.endDate}`
+                                      }
+                                    </td>
+                                    <td className="p-3 text-right">
+                                      <button
+                                        onClick={() => handleDeleteAbsence(abs.id!)}
+                                        className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-all cursor-pointer"
+                                        title="Remover"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              {absences.filter(a => a.role === 'mechanic').length === 0 && (
+                                <tr>
+                                  <td colSpan={3} className="p-6 text-center text-slate-400 font-medium">
+                                    Nenhuma indisponibilidade registrada.
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ) : activeTab === 'goals' ? (
                   <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">

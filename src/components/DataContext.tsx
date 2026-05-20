@@ -49,7 +49,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     // Identify machines with active maintenance occurrences
     const machineStatusMap = new Map<string, ForkliftStatus>();
     activeStops.forEach(stop => {
-      const f = forklifts.find(fork => fork.id === stop.forkliftId);
+      const f = forklifts.find(fork => 
+        fork.id === stop.forkliftId || 
+        (fork.serialNumber && stop.forkliftId && fork.serialNumber.trim().toLowerCase() === stop.forkliftId.trim().toLowerCase())
+      );
       if (f?.serialNumber) {
         const serial = f.serialNumber.trim().toLowerCase();
         const severity = stop.severity || 'high';
