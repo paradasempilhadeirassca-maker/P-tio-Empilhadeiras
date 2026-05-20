@@ -615,7 +615,7 @@ export function MechanicView() {
           isReplaced={isReplaced}
           setIsReplaced={setIsReplaced}
           addPart={addPart}
-          removePart={(i) => setParts(parts.filter((_, idx) => idx !== i))}
+          removePart={(i: number) => setParts(parts.filter((_, idx) => idx !== i))}
           showSuggestions={showSuggestions}
           setShowSuggestions={setShowSuggestions}
           selectedPartId={selectedPartId}
@@ -925,7 +925,7 @@ function MaintenanceForm({
                                 />
                                 {showSuggestions && partName && (
                                     <div className="absolute z-10 w-full mt-2 bg-white border border-slate-100 rounded-2xl shadow-2xl overflow-hidden max-h-40 overflow-y-auto">
-                                        {inventoryParts.filter(p => p.name.toLowerCase().includes(partName.toLowerCase())).map(p => (
+                                        {inventoryParts.filter((p: any) => p.name.toLowerCase().includes(partName.toLowerCase())).map((p: any) => (
                                             <button 
                                                 key={p.id}
                                                 onClick={() => {

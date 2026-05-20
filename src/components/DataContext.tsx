@@ -11,8 +11,9 @@ import {
   QueryDocumentSnapshot
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Forklift, UserProfile, OperationGoal, MaintenanceStop, ForkliftStatus, OperatorAbsence } from '../types';
+import { Forklift, UserProfile, OperationGoal, MaintenanceStop, ForkliftStatus, OperatorAbsence, SafraPeriod } from '../types';
 import { useAuth } from './Auth';
+import { handleFirestoreError, OperationType } from '../lib/firebaseErrorHandler';
 
 interface DataContextType {
   forklifts: Forklift[];
@@ -22,6 +23,7 @@ interface DataContextType {
   goals: OperationGoal[];
   activeStops: MaintenanceStop[];
   absences: OperatorAbsence[];
+  safraPeriods: SafraPeriod[];
   loading: boolean;
   refreshGlobalData: (force?: boolean) => Promise<void>;
   quotaExceeded: boolean;
@@ -40,6 +42,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [goals, setGoals] = useState<OperationGoal[]>([]);
   const [activeStops, setActiveStops] = useState<MaintenanceStop[]>([]);
   const [absences, setAbsences] = useState<OperatorAbsence[]>([]);
+  const [safraPeriods, setSafraPeriods] = useState<SafraPeriod[]>([]);
   const [loading, setLoading] = useState(true);
 
   const uniqueForklifts = useMemo(() => {
@@ -219,6 +222,18 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         console.error("Error fetching absences:", err);
       }
 
+      // Safra Periods
+      let sData: SafraPeriod[] = [];
+      const pathSafra = 'safra_periods';
+      try {
+        const sSnap = await getDocs(collection(db, pathSafra));
+        sData = sSnap.docs.map(d => ({ id: d.id, ...d.data() } as SafraPeriod));
+        setSafraPeriods(sData);
+      } catch (err) {
+        console.error("Error fetching safra periods:", err);
+        handleFirestoreError(err, OperationType.LIST, pathSafra);
+      }
+
       // Salvar no Cache
       localStorage.setItem(CACHE_KEY, JSON.stringify({
         forklifts: fData,
@@ -268,7 +283,19 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         console.error("Realtime stops error:", err);
       });
 
-      return () => unsubscribe();
+      const unsubscribeAbsences = onSnapshot(collection(db, 'operator_absences'), (snapshot) => {
+        setAbsences(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as OperatorAbsence)));
+      });
+
+      const unsubscribeSafra = onSnapshot(collection(db, 'safra_periods'), (snapshot) => {
+        setSafraPeriods(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as SafraPeriod)));
+      });
+
+      return () => {
+        unsubscribe();
+        unsubscribeAbsences();
+        unsubscribeSafra();
+      };
     } else if (!authLoading && !user) {
       setLoading(false);
     }
@@ -283,9 +310,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       goals, 
       activeStops,
       absences,
+      safraPeriods,
       loading, 
       refreshGlobalData: fetchGlobalData,
-      fetchGlobalData,
       quotaExceeded,
       setQuotaExceeded
     }}>

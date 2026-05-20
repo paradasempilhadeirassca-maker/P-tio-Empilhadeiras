@@ -125,7 +125,7 @@ export function OperationalIndicators() {
       
       // Fetch maintenance history in range
       const qM = query(
-        collection(db, 'maintenance_history'),
+        collection(db, 'maintenance'),
         where('stopTime', '>=', startDate + 'T00:00:00'),
         where('stopTime', '<=', endDate + 'T23:59:59'),
         orderBy('stopTime', 'asc')
@@ -376,7 +376,7 @@ export function OperationalIndicators() {
         key: type,
         label: OPERATION_LABELS[type] || type,
         totalProduction,
-        avgDaily: parseFloat(avgDaily.toFixed(1)),
+        avgDaily: parseFloat(avgDaily.toFixed(0)),
         productivity: parseFloat(productivity.toFixed(1)),
         hoursActive: parseFloat(hoursActive.toFixed(1)),
         bestDay: bestDay.date ? bestDay : null,
@@ -387,7 +387,7 @@ export function OperationalIndicators() {
         projection: Math.round(projection),
         monthGoal,
         dailyGoal,
-        neededDailyToGoal: parseFloat(neededDailyToGoal.toFixed(1)),
+        neededDailyToGoal: parseFloat(neededDailyToGoal.toFixed(0)),
         remainingDays,
         trend,
         dailyHistory: Object.keys(dailyData).sort().map(date => ({
@@ -591,7 +591,7 @@ export function OperationalIndicators() {
                 </div>
                 <div>
                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Soma Médias Diárias</p>
-                   <h3 className="text-3xl font-black text-slate-900">{globalSummary.avgDailyProd.toFixed(1)} <span className="text-sm text-slate-400">f/dia</span></h3>
+                   <h3 className="text-3xl font-black text-slate-900">{globalSummary.avgDailyProd.toFixed(0)} <span className="text-sm text-slate-400">f/dia</span></h3>
                 </div>
             </div>
 
@@ -756,7 +756,7 @@ export function OperationalIndicators() {
                                                     dataKey="production" 
                                                     position="top" 
                                                     style={{ fontSize: '10px', fontWeight: '900', fill: '#64748b' }} 
-                                                    formatter={(v: number) => v > 0 ? v : ''}
+                                                    formatter={(v: any) => v && v > 0 ? v : ''}
                                                 />
                                             </Bar>
                                         </BarChart>
@@ -798,7 +798,7 @@ export function OperationalIndicators() {
                                     dataKey="monthGoal" 
                                     position="right" 
                                     style={{ fontSize: '8px', fontWeight: '700', fill: '#94a3b8' }} 
-                                    formatter={(v: number) => v > 0 ? `Meta: ${v}` : ''}
+                                    formatter={(v: any) => v && v > 0 ? `Meta: ${v}` : ''}
                                 />
                             </Bar>
                         </BarChart>
@@ -941,7 +941,7 @@ export function OperationalIndicators() {
                     </div>
                     <h4 className="text-xs font-black text-red-900 uppercase tracking-tight">Maior Deficiência</h4>
                     <p className="text-lg font-black text-red-600 truncate">{downtimeStats[0]?.name || '---'}</p>
-                    <p className="text-[10px] font-bold text-red-400">Representa {downtimeStats[0] ? ((downtimeStats[0].hours / (downtimeStats.reduce((acc,s)=>acc+s.hours,0)||1)) * 100).toFixed(1) : 0}% das paradas.</p>
+                    <p className="text-[10px] font-bold text-red-400">Representa {downtimeStats[0] ? ((downtimeStats[0].hours / (downtimeStats.reduce((acc,s)=>acc+s.hours,0)||1)) * 100).toFixed(0) : 0}% das paradas.</p>
                 </div>
 
                 <div className="p-6 bg-amber-50 border border-amber-100 rounded-[2rem] space-y-2">

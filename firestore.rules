@@ -104,6 +104,15 @@ service cloud.firestore {
              data.reason is string && data.reason.size() <= 50;
     }
 
+    function isValidSafraPeriod(data) {
+      return data.keys().hasAll(['year', 'startDate', 'endDate', 'type', 'isActive']) &&
+             data.year is number &&
+             data.startDate is string &&
+             data.endDate is string &&
+             data.type in ['safra', 'entressafra'] &&
+             data.isActive is bool;
+    }
+
     // ===============================================================
     // Collection Rules
     // ===============================================================
@@ -115,6 +124,12 @@ service cloud.firestore {
         (userId == request.auth.uid && incoming().role == existing().role && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'password'])) ||
         isManager()
       );
+    }
+
+    match /safra_periods/{periodId} {
+      allow list: if isSignedIn();
+      allow get: if isSignedIn();
+      allow write: if isManager() && isValidSafraPeriod(incoming());
     }
 
     match /operator_absences/{absenceId} {

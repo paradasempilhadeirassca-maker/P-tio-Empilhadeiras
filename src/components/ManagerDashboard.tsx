@@ -41,10 +41,52 @@ import {
   AreaChart,
   Area,
 } from 'recharts';
-import { TrendingUp, Clock, Activity, AlertTriangle, Users, Package, Calendar, Filter, Bell, ClipboardCheck, Watch, Layers, BoxSelect, Truck, CloudRain, Info, ArrowLeft, Target, Settings2, Plus, Save, X, Trash2, History as HistoryIcon, Wrench, ShieldAlert, BarChart3, ChevronRight, UserMinus, UserCheck, Timer, Footprints } from 'lucide-react';
+import { TrendingUp, Clock, Activity, AlertTriangle, Users, Package, Calendar, Filter, Bell, ClipboardCheck, Watch, Layers, BoxSelect, Truck, CloudRain, Info, ArrowLeft, Target, Settings2, Plus, Save, X, Trash2, History as HistoryIcon, Wrench, ShieldAlert, BarChart3, ChevronRight, UserMinus, UserCheck, Timer, Footprints, ShieldCheck, Zap, CheckCircle2, AlertCircle, LayoutDashboard } from 'lucide-react';
 import { cn, formatDuration, formatDate, formatTime, formatDateTime, formatCurrency, formatNumber } from '../lib/utils';
 import { calculateOperatorEfficiency } from '../lib/operationalLogic';
 import { sendWhatsAppNotification, sendLocalNotification } from '../lib/notifications';
+
+import { SafraImpactDashboard } from './SafraImpactDashboard';
+
+function KPIItem({ label, value, subValue, icon, color, trend, trendType }: { 
+  label: string; 
+  value: string; 
+  subValue: string; 
+  icon: React.ReactNode; 
+  color: 'blue' | 'emerald' | 'red' | 'amber' | 'indigo'; 
+  trend?: string; 
+  trendType?: 'up' | 'down' | 'neutral' 
+}) {
+  const colorClasses = {
+    blue: 'bg-blue-50 text-blue-600',
+    emerald: 'bg-emerald-50 text-emerald-600',
+    red: 'bg-red-50 text-red-600',
+    amber: 'bg-amber-50 text-amber-600',
+    indigo: 'bg-indigo-50 text-indigo-600',
+  };
+
+  return (
+    <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm transition-all hover:shadow-md group">
+      <div className={cn("p-4 rounded-2xl w-fit mb-4 group-hover:scale-110 transition-transform", colorClasses[color] || 'bg-slate-50 text-slate-600')}>
+        {icon}
+      </div>
+      <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-1">{label}</h4>
+      <div className="flex items-baseline gap-2">
+        <p className="text-4xl font-black text-slate-900">{value}</p>
+        {trend && (
+          <span className={cn(
+            "text-[10px] font-black uppercase px-2 py-0.5 rounded-lg",
+            trendType === 'up' ? "bg-emerald-50 text-emerald-600" : 
+            trendType === 'down' ? "bg-red-50 text-red-600" : "bg-slate-100 text-slate-600"
+          )}>
+            {trend}
+          </span>
+        )}
+      </div>
+      <p className="mt-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">{subValue}</p>
+    </div>
+  );
+}
 
 const COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#10b981', '#8b5cf6', '#ec4899'];
 
@@ -64,7 +106,7 @@ export function ManagerDashboard() {
   const [filterMonth, setFilterMonth] = useState<string>('all');
   const [filterForklift, setFilterForklift] = useState<string>('all');
   const [filterOperator, setFilterOperator] = useState<string>('all');
-  const [activeView, setActiveView] = useState<'maintenance' | 'production' | 'team'>('maintenance');
+  const [activeView, setActiveView] = useState<'mecanica' | 'disponibilidade' | 'producao' | 'operacao' | 'executiva' | 'safra'>('mecanica');
   const [teamSubView, setTeamSubView] = useState<'operation' | 'maintenance'>('operation');
   const [showAbsenceModal, setShowAbsenceModal] = useState(false);
   const [newAbsence, setNewAbsence] = useState<Partial<OperatorAbsence>>({
@@ -421,25 +463,6 @@ export function ManagerDashboard() {
       .sort((a, b) => b.value - a.value);
   }, [filteredHistory]);
 
-  const handleSendReminders = async () => {
-    if (machinesMissingChecklist.length === 0) {
-      alert("Todas as máquinas operantes já possuem check-list hoje!");
-      return;
-    }
-
-    const message = `⚠️ *LEMBRETE DE CHECK-LIST*\n\n` +
-      `As seguintes máquinas ainda não realizaram o check-list diário:\n\n` +
-      machinesMissingChecklist.map(f => {
-        const assigned = f.assignedOperatorNameShift1 ? ` (Resp: ${f.assignedOperatorNameShift1})` : '';
-        return `• ${f.model} ${f.serialNumber}${assigned}`;
-      }).join('\n') +
-      `\n\nFavor realizar a inspeção o quanto antes.`;
-
-    sendLocalNotification(`⚠️ LEMBRETE DE CHECK-LIST`, `Existem ${machinesMissingChecklist.length} máquinas sem check-list hoje.`);
-    await sendWhatsAppNotification(message);
-    alert("Lembretes enviados!");
-  };
-
   const machinesMissingChecklist = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
     const machinesWithChecklist = new Set(checklists.filter(c => c.timestamp.startsWith(today)).map(c => c.forkliftId));
@@ -545,6 +568,53 @@ export function ManagerDashboard() {
       }
     };
   }, [absences, users, uniqueForklifts, activeStops]);
+
+  const handleSendReminders = async () => {
+    if (machinesMissingChecklist.length === 0) {
+      alert("Todas as máquinas operantes já possuem check-list hoje!");
+      return;
+    }
+
+    const message = `⚠️ *LEMBRETE DE CHECK-LIST*\n\n` +
+      `As seguintes máquinas ainda não realizaram o check-list diário:\n\n` +
+      machinesMissingChecklist.map(f => {
+        const assigned = f.assignedOperatorNameShift1 ? ` (Resp: ${f.assignedOperatorNameShift1})` : '';
+        return `• ${f.model} ${f.serialNumber}${assigned}`;
+      }).join('\n') +
+      `\n\nFavor realizar a inspeção o quanto antes.`;
+
+    sendLocalNotification(`⚠️ LEMBRETE DE CHECK-LIST`, `Existem ${machinesMissingChecklist.length} máquinas sem check-list hoje.`);
+    await sendWhatsAppNotification(message);
+    alert("Lembretes enviados!");
+  };
+
+  const mecanicoStatus = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const mechanicUsers = users.filter(u => u.role === 'mechanic');
+    const mechanicAbsences = absences.filter(a => a.role === 'mechanic' && today >= a.startDate && today <= a.endDate);
+    
+    return mechanicUsers.map(m => {
+      const absence = mechanicAbsences.find(a => a.operatorId === m.uid);
+      const isAbsent = !!absence;
+      
+      let daysAbsent = 0;
+      if (isAbsent) {
+        const start = new Date(absence.startDate);
+        daysAbsent = Math.floor((new Date().getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      }
+
+      return {
+        ...m,
+        isAbsent,
+        daysAbsent,
+        absenceReason: absence?.reason,
+        // Impact estimates
+        backlogIncrease: isAbsent ? 20 : 0, // Placeholder logic
+        preventivesAtRisk: isAbsent ? teamStats.maintenance.preventivesAtRisk : 0,
+        machinesAwaiting: isAbsent ? teamStats.maintenance.awaitingMaintenance : 0
+      };
+    });
+  }, [users, absences, teamStats.maintenance]);
 
   const capacityTrend = useMemo(() => {
     const trend = [];
@@ -731,8 +801,8 @@ export function ManagerDashboard() {
         downtimeHours: parseFloat(downtimeHours.toFixed(1)),
         intervalHours: parseFloat(intervalHours.toFixed(1)),
         totalHours: parseFloat(totalHours.toFixed(1)),
-        percentage: parseFloat(percentage.toFixed(1)),
-        productivity: productiveHours > 0 ? parseFloat((data.production / productiveHours).toFixed(2)) : 0,
+        percentage: parseFloat(percentage.toFixed(0)),
+        productivity: productiveHours > 0 ? parseFloat((data.production / productiveHours).toFixed(1)) : 0,
         production: data.production,
         goal: targetProduction,
         count: data.count,
@@ -778,7 +848,7 @@ export function ManagerDashboard() {
     return Object.entries(reasonsMap).map(([key, minutes]) => ({
       name: labels[key] || key,
       value: parseFloat((minutes / 60).toFixed(1)),
-      percentage: totalDowntime > 0 ? parseFloat(((minutes / totalDowntime) * 100).toFixed(1)) : 0
+      percentage: totalDowntime > 0 ? parseFloat(((minutes / totalDowntime) * 100).toFixed(0)) : 0
     })).sort((a, b) => b.value - a.value);
   }, [operationStats]);
 
@@ -810,7 +880,7 @@ export function ManagerDashboard() {
       const hours = totalMinutes / 60;
       return {
         production: totalProd,
-        productivity: hours > 0 ? parseFloat((totalProd / hours).toFixed(2)) : 0,
+        productivity: hours > 0 ? parseFloat((totalProd / hours).toFixed(1)) : 0,
         hours: parseFloat(hours.toFixed(1))
       };
     };
@@ -892,7 +962,7 @@ export function ManagerDashboard() {
   const totalProduction = useMemo(() => operationStats.reduce((acc, s) => acc + s.production, 0), [operationStats]);
   const avgProductivity = useMemo(() => {
     const totalHours = operationStats.reduce((acc, s) => acc + s.hours, 0);
-    return totalHours > 0 ? parseFloat((totalProduction / totalHours).toFixed(2)) : 0;
+    return totalHours > 0 ? parseFloat((totalProduction / totalHours).toFixed(1)) : 0;
   }, [totalProduction, operationStats]);
   const uniqueOperators = useMemo(() => {
     const idMap = new Map<string, { id: string, name: string }>();
@@ -937,7 +1007,7 @@ export function ManagerDashboard() {
     const totalStopTime = operationStats.reduce((acc, s) => acc + s.downtimeHours, 0);
     const totalIntervalTime = operationStats.reduce((acc, s) => acc + (s.intervalHours || 0), 0);
     const total = totalProdTime + totalStopTime + totalIntervalTime;
-    return total > 0 ? parseFloat(((totalStopTime / total) * 100).toFixed(1)) : 0;
+    return total > 0 ? parseFloat(((totalStopTime / total) * 100).toFixed(0)) : 0;
   }, [operationStats]);
 
   const efficiencyData = useMemo(() => {
@@ -1051,9 +1121,9 @@ export function ManagerDashboard() {
       .map(([name, data]) => {
         const hours = data.productiveMinutes / 60;
         // Average productivity weighted by the duration of each operation
-        const productivity = data.totalWeight > 0 ? parseFloat((data.weightedProductivity / data.totalWeight).toFixed(2)) : 0;
+        const productivity = data.totalWeight > 0 ? parseFloat((data.weightedProductivity / data.totalWeight).toFixed(1)) : 0;
         const avgTarget = data.totalWeight > 0 ? data.weightedTarget / data.totalWeight : 15;
-        const checklistScore = data.checklistsCount > 0 ? parseFloat((data.checklist / data.checklistsCount).toFixed(1)) : 0;
+        const checklistScore = data.checklistsCount > 0 ? parseFloat((data.checklist / data.checklistsCount).toFixed(0)) : 0;
         
         // Efficiency relative to weighted goal
         const efficiency = avgTarget > 0 ? Math.min(100, Math.floor((productivity / avgTarget) * 100)) : 0;
@@ -1110,7 +1180,7 @@ export function ManagerDashboard() {
       <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div className="flex items-center gap-4">
           <button
-            onClick={fetchData}
+            onClick={() => fetchData()}
             disabled={isRefreshing}
             className={cn(
               "p-3 rounded-2xl border border-slate-200 transition-all active:scale-95 group",
@@ -1121,51 +1191,77 @@ export function ManagerDashboard() {
             <HistoryIcon className={cn("w-5 h-5 transition-transform duration-700", isRefreshing ? "animate-spin" : "group-hover:rotate-180")} />
           </button>
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold text-slate-900 leading-tight">Dashboard de Gestão</h1>
+            <h1 className="text-2xl md:text-3xl font-bold text-slate-900 leading-tight">Central Operacional</h1>
             <p className="text-slate-500 text-sm md:text-base">
-              {activeView === 'production' ? 'Monitoramento de Produção e Eficiência' : 
-               activeView === 'maintenance' ? 'Monitoramento Mecânico e Disponibilidade de Frota' :
-               teamSubView === 'operation' ? 'Gestão de Capital Humano e Capacidade Operativa' : 'Gestão de Squads e Backlog de Manutenção'}
+              {activeView === 'mecanica' ? '1. Gestão de Manutenção' : 
+               activeView === 'disponibilidade' ? '2. Saúde da Frota' :
+               activeView === 'producao' ? '3. Performance de Produção' : 
+               activeView === 'operacao' ? '4. Equipe e Capacidade' : 'Análise de Impacto de Safra'}
             </p>
           </div>
         </div>
         <div className="w-full md:w-auto flex flex-wrap gap-2 items-center">
-          <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200">
+          <div className="flex bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
             <button 
-              onClick={() => setActiveView('maintenance')}
+              onClick={() => setActiveView('mecanica')}
               className={cn(
-                "px-6 py-2.5 rounded-xl text-sm font-black transition-all flex items-center gap-2",
-                activeView === 'maintenance' 
-                  ? "bg-white text-blue-600 shadow-sm" 
+                "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2",
+                activeView === 'mecanica' 
+                  ? "bg-white text-indigo-600 shadow-sm" 
                   : "text-slate-500 hover:text-slate-700"
               )}
             >
               <Wrench className="w-4 h-4" />
-              Manutenção
+              1. Mecânica
             </button>
             <button 
-              onClick={() => setActiveView('production')}
+              onClick={() => setActiveView('disponibilidade')}
               className={cn(
-                "px-6 py-2.5 rounded-xl text-sm font-black transition-all flex items-center gap-2",
-                activeView === 'production' 
+                "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2",
+                activeView === 'disponibilidade' 
+                  ? "bg-white text-emerald-600 shadow-sm" 
+                  : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              <Activity className="w-4 h-4" />
+              2. Disponibilidade
+            </button>
+            <button 
+              onClick={() => setActiveView('producao')}
+              className={cn(
+                "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2",
+                activeView === 'producao' 
                   ? "bg-white text-blue-600 shadow-sm" 
                   : "text-slate-500 hover:text-slate-700"
               )}
             >
-              <TrendingUp className="w-4 h-4" />
-              Produção
+              <Target className="w-4 h-4" />
+              3. Produção
             </button>
             <button 
-              onClick={() => setActiveView('team')}
+              onClick={() => setActiveView('operacao')}
               className={cn(
-                "px-6 py-2.5 rounded-xl text-sm font-black transition-all flex items-center gap-2",
-                activeView === 'team' 
-                  ? "bg-white text-blue-600 shadow-sm" 
+                "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2",
+                activeView === 'operacao' 
+                  ? "bg-white text-orange-600 shadow-sm" 
                   : "text-slate-500 hover:text-slate-700"
               )}
             >
               <Users className="w-4 h-4" />
-              Gestão Operacional
+              4. Operação
+            </button>
+            <div className="w-px h-4 bg-slate-300 mx-2" />
+            <button 
+              onClick={() => setActiveView('safra')}
+              className={cn(
+                "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2",
+                activeView === 'safra' 
+                  ? "bg-white text-red-600 shadow-sm" 
+                  : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              <AlertTriangle className="w-4 h-4" />
+              Impacto Safra
             </button>
           </div>
         </div>
@@ -1222,1254 +1318,705 @@ export function ManagerDashboard() {
       </div>
 
       {/* View Content */}
-      {activeView === 'production' && (
+      {activeView === 'mecanica' && (
         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-          {/* Bottleneck Alert */}
-          {bottleneckInfo && (
-            <div className="bg-red-50 border-l-4 border-red-500 p-6 rounded-2xl flex items-center justify-between shadow-lg shadow-red-100">
-               <div className="flex items-center gap-4">
-                 <div className="p-3 bg-red-500 rounded-xl">
-                   <AlertTriangle className="w-6 h-6 text-white" />
-                 </div>
-                 <div>
-                   <h3 className="text-xl font-bold text-red-900 tracking-tight">Atenção: Gargalo em {bottleneckInfo.name}</h3>
-                   <p className="text-red-700 text-sm font-medium">Esta operação está com produtividade ({bottleneckInfo.productivity} fardos/h) abaixo da média.</p>
-                 </div>
-               </div>
-            </div>
-          )}
-
-          {/* Production Stats Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            <StatCard 
-              title="Produção Total" 
-              value={totalProduction.toString()}
-              icon={<Package className="w-6 h-6 text-blue-600" />}
-              trend="Fardos Total"
-            />
-            <StatCard 
-              title="Eficiência Média" 
-              value={`${avgProductivity}/h`}
-              icon={<TrendingUp className="w-6 h-6 text-green-600" />}
-              trend="Fardos p/ Hora"
-            />
-            <StatCard 
-              title="Tempo de Parada" 
-              value={`${totalStoppedPercent}%`}
-              icon={<Clock className="w-6 h-6 text-amber-600" />}
-              trend="Impacto na Produção"
-            />
-          </div>
-
-          {/* Objective vs Real Chart */}
-          <div className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-xl space-y-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Target className="w-5 h-5 text-indigo-500" />
-                <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Objetivo x Real (Total Fardos)</h3>
-              </div>
-              <div className="flex gap-4">
-                <div className="flex items-center gap-1.5">
-                  <div className="w-2.5 h-2.5 rounded-full bg-slate-200" />
-                  <span className="text-[10px] font-bold text-slate-500 uppercase">Objetivo</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="w-2.5 h-2.5 rounded-full bg-blue-600" />
-                  <span className="text-[10px] font-bold text-slate-500 uppercase">Realizado</span>
-                </div>
-              </div>
-            </div>
-            <div className="h-[350px] w-full pt-4">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={operationStats} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis 
-                    dataKey="name" 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{ fontSize: 10, fontWeight: 900, fill: '#64748b' }} 
-                  />
-                  <YAxis 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{ fontSize: 10, fontBold: true, fill: '#64748b' }}
-                  />
-                  <Tooltip 
-                    cursor={{ fill: '#f8fafc' }}
-                    contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '12px' }}
-                  />
-                  <Bar dataKey="goal" name="Objetivo" fill="#e2e8f0" radius={[4, 4, 0, 0]} barSize={40} />
-                  <Bar dataKey="production" name="Realizado" fill="#2563eb" radius={[4, 4, 0, 0]} barSize={25} />
-                  <Line type="monotone" dataKey="goal" stroke="#94a3b8" strokeDasharray="5 5" dot={false} strokeWidth={2} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Daily Production Grouped Chart */}
-          <div className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-xl space-y-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <BarChart className="w-5 h-5 text-blue-500" />
-                <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Produção Diária por Operação</h3>
-              </div>
-              <div className="flex gap-4">
-                {[
-                  { label: 'Produção', color: '#10b981' },
-                  { label: 'Quebra', color: '#3b82f6' },
-                  { label: 'Emblocam.', color: '#8b5cf6' },
-                  { label: 'Carregam.', color: '#f59e0b' }
-                ].map(item => (
-                  <div key={item.label} className="flex items-center gap-1.5">
-                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-                    <span className="text-[10px] font-bold text-slate-500 uppercase">{item.label}</span>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-2 bg-white p-10 rounded-[3.5rem] border border-slate-200 shadow-xl space-y-8">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="p-4 bg-indigo-50 rounded-2xl text-indigo-600">
+                    <Users className="w-8 h-8" />
                   </div>
-                ))}
-              </div>
-            </div>
-            <div className="h-[350px] w-full pt-4">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={dailyProductionData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis 
-                    dataKey="date" 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{ fontSize: 10, fontWeight: 900, fill: '#64748b' }} 
-                  />
-                  <YAxis 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{ fontSize: 10, fontBold: true, fill: '#64748b' }}
-                  />
-                  <Tooltip 
-                    cursor={{ fill: '#f8fafc' }}
-                    contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '12px' }}
-                  />
-                  <Bar dataKey="tirar_producao" name="Produção" fill="#10b981" radius={[4, 4, 0, 0]} barSize={12} />
-                  <Bar dataKey="quebra" name="Quebra" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={12} />
-                  <Bar dataKey="emblocamento" name="Emblocamento" fill="#8b5cf6" radius={[4, 4, 0, 0]} barSize={12} />
-                  <Bar dataKey="carregamento" name="Carregamento" fill="#f59e0b" radius={[4, 4, 0, 0]} barSize={12} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-xl space-y-10">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-              <div className="space-y-6">
-                <div className="flex items-center gap-2">
-                  <TrendingUp className="w-5 h-5 text-green-500" />
-                  <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Produtividade/Hora por Operação</h3>
-                </div>
-                <div className="h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={operationStats} layout="vertical" margin={{ left: 20, right: 80 }}>
-                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
-                      <XAxis type="number" hide />
-                      <YAxis 
-                        type="category" 
-                        dataKey="name" 
-                        axisLine={false} 
-                        tickLine={false} 
-                        tick={{fontSize: 10, fontWeight: 900, fill: '#1e293b'}} 
-                        width={90} 
-                      />
-                      <Bar dataKey="productivity" radius={[0, 8, 8, 0]} barSize={24}>
-                        {operationStats.map((entry, index) => (
-                          <Cell 
-                            key={`cell-${index}`} 
-                            fill={entry.key === bottleneckInfo?.key ? '#ef4444' : '#10b981'} 
-                          />
-                        ))}
-                        <LabelList 
-                          dataKey="productivity" 
-                          position="right" 
-                          style={{ fontSize: '11px', fontWeight: '900', fill: '#475569' }} 
-                          formatter={(val: any) => `${val}/h`}
-                        />
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              <div className="space-y-6">
-                <div className="flex items-center gap-2">
-                  <Users className="w-5 h-5 text-blue-500" />
-                  <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Performance Individual dos Operadores</h3>
-                </div>
-                <div className="max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="border-b border-slate-100">
-                        <th className="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Operador</th>
-                        <th className="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Produtiv.</th>
-                        <th className="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Fardos</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50">
-                      {operatorPerformanceData.map((op, idx) => (
-                        <tr key={idx}>
-                          <td className="py-3 font-bold text-xs text-slate-900">{op.name}</td>
-                          <td className="py-3 text-center text-xs font-bold text-green-600">{op.productivity}/h</td>
-                          <td className="py-3 text-right text-xs font-black text-slate-900">{operationalEvents.filter(e => e.operatorName === op.name).reduce((acc,e) => acc + (e.production || 0), 0)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeView === 'team' && (
-        <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
-          
-          {/* Sub-view Toggle */}
-          <div className="flex gap-4 border-b border-slate-200 pb-px">
-            <button
-              onClick={() => setTeamSubView('operation')}
-              className={cn(
-                "pb-4 px-2 text-sm font-black transition-all relative",
-                teamSubView === 'operation' ? "text-blue-600" : "text-slate-400 hover:text-slate-600"
-              )}
-            >
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4" />
-                <span>Gestão da Operação</span>
-              </div>
-              {teamSubView === 'operation' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-blue-600 rounded-t-full" />}
-            </button>
-            <button
-              onClick={() => setTeamSubView('maintenance')}
-              className={cn(
-                "pb-4 px-2 text-sm font-black transition-all relative",
-                teamSubView === 'maintenance' ? "text-indigo-600" : "text-slate-400 hover:text-slate-600"
-              )}
-            >
-              <div className="flex items-center gap-2">
-                <Wrench className="w-4 h-4" />
-                <span>Gestão da Manutenção</span>
-              </div>
-              {teamSubView === 'maintenance' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-indigo-600 rounded-t-full" />}
-            </button>
-          </div>
-
-          {teamSubView === 'operation' ? (
-            <div className="space-y-10 animate-in fade-in duration-300">
-              {/* Operation Team Section */}
-              <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tighter flex items-center gap-2">
-                    <Users className="w-7 h-7 text-blue-600" />
-                    Equipa de Operação
-                  </h2>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                  <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm relative overflow-hidden group">
-                     <div className="p-4 bg-emerald-50 rounded-2xl w-fit mb-4">
-                       <UserCheck className="w-6 h-6 text-emerald-600" />
-                     </div>
-                     <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-1">Operadores Ativos</h4>
-                     <p className="text-4xl font-black text-slate-900">{teamStats.operation.availableOperators} <span className="text-sm text-slate-400">/ {teamStats.operation.totalOperators}</span></p>
-                     <div className="mt-4 flex items-center gap-2">
-                       <div className="flex -space-x-2">
-                         {users.filter(u => u.role === 'operator' || u.role === 'production').slice(0, 5).map((u, i) => (
-                           <div key={i} className="w-6 h-6 rounded-full bg-slate-100 border-2 border-white flex items-center justify-center text-[8px] font-black">{u.displayName?.charAt(0)}</div>
-                         ))}
-                       </div>
-                       <span className="text-[10px] font-bold text-slate-400">Disponível Hoje</span>
-                     </div>
-                  </div>
-
-                  <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
-                     <div className="p-4 bg-red-50 rounded-2xl w-fit mb-4">
-                       <UserMinus className="w-6 h-6 text-red-600" />
-                     </div>
-                     <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-1">Ausências (Op)</h4>
-                     <p className="text-4xl font-black text-red-600">{teamStats.operation.absentOperators}</p>
-                     <button 
-                       onClick={() => setShowAbsenceModal(true)}
-                       className="mt-4 text-[10px] font-black text-blue-600 hover:underline uppercase flex items-center gap-1"
-                     >
-                       <Plus className="w-3 h-3" /> Registrar Ausência
-                     </button>
-                  </div>
-
-                  <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
-                     <div className="p-4 bg-blue-50 rounded-2xl w-fit mb-4">
-                       <Timer className="w-6 h-6 text-blue-600" />
-                     </div>
-                     <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-1">Capacidade Operacional</h4>
-                     <p className="text-4xl font-black text-slate-900">{teamStats.operation.operationalCapacity.toFixed(0)}%</p>
-                     <div className="mt-4 h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                       <div className="h-full bg-blue-600" style={{ width: `${teamStats.operation.operationalCapacity}%` }} />
-                     </div>
-                  </div>
-
-                  <div className={cn(
-                    "p-8 rounded-[2.5rem] border-2 shadow-sm transition-all",
-                    teamStats.operation.riskLevel === 'CRITICAL' ? "bg-red-50 border-red-200" :
-                    teamStats.operation.riskLevel === 'HIGH' ? "bg-amber-50 border-amber-200" : "bg-emerald-50 border-emerald-200"
-                  )}>
-                     <div className={cn(
-                       "p-4 rounded-2xl w-fit mb-4",
-                       teamStats.operation.riskLevel === 'CRITICAL' ? "bg-red-100" : "bg-emerald-100"
-                     )}>
-                       <ShieldAlert className={cn("w-6 h-6", teamStats.operation.riskLevel === 'CRITICAL' ? "text-red-600" : "text-emerald-600")} />
-                     </div>
-                     <h4 className="text-sm font-black text-slate-500 uppercase tracking-widest mb-1">Risco Operacional</h4>
-                     <p className={cn(
-                       "text-4xl font-black",
-                       teamStats.operation.riskLevel === 'CRITICAL' ? "text-red-600" : "text-emerald-600"
-                     )}>{teamStats.operation.riskLevel}</p>
-                     {teamStats.operation.machineOperatorImbalance && (
-                       <p className="mt-4 text-[9px] font-black text-red-700 uppercase animate-pulse">⚠️ Máquinas {'>'} Operadores</p>
-                     )}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-                   <div className="bg-white p-10 rounded-[3rem] border border-slate-200 shadow-xl space-y-8">
-                     <div className="flex items-center justify-between">
-                       <div className="flex items-center gap-3">
-                         <Users className="w-6 h-6 text-slate-900" />
-                         <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">Status da Equipa de Operação</h3>
-                       </div>
-                     </div>
-                     
-                     <div className="space-y-4">
-                       {users.filter(u => u.role === 'operator' || u.role === 'production').map(user => {
-                         const absence = teamStats.operation.activeAbsences.find(a => a.operatorId === user.uid);
-                         return (
-                           <div key={user.uid} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                             <div className="flex items-center gap-4">
-                                <div className={cn(
-                                  "w-10 h-10 rounded-full flex items-center justify-center text-sm font-black border-2",
-                                  absence ? "bg-red-50 border-red-200 text-red-600" : "bg-emerald-50 border-emerald-200 text-emerald-600"
-                                )}>
-                                  {user.displayName?.charAt(0)}
-                                </div>
-                                <div>
-                                  <p className="text-sm font-black text-slate-900">{user.displayName}</p>
-                                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{user.sector || 'INDETERMINADO'}</p>
-                                </div>
-                             </div>
-                             <div className="text-right">
-                                <span className={cn(
-                                  "text-[10px] font-black px-3 py-1 rounded-full uppercase",
-                                  absence ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700"
-                                )}>
-                                  {absence ? absence.reason : 'Disponível'}
-                                </span>
-                                {absence && <p className="text-[9px] font-black text-slate-400 mt-1 uppercase">Até {new Date(absence.endDate).toLocaleDateString()}</p>}
-                             </div>
-                           </div>
-                         );
-                       })}
-                     </div>
-                   </div>
-
-                   <div className="bg-white p-10 rounded-[3rem] border border-slate-200 shadow-xl space-y-8">
-                     <div className="flex items-center gap-3">
-                       <BarChart3 className="w-6 h-6 text-blue-600" />
-                       <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">Impacto na Operação</h3>
-                     </div>
-                     <div className="h-[300px]">
-                       <ResponsiveContainer width="100%" height="100%">
-                         <AreaChart data={capacityTrend}>
-                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                           <XAxis dataKey="date" tick={{ fontSize: 10, fontBold: true }} axisLine={false} tickLine={false} />
-                           <YAxis domain={[0, 100]} tick={{ fontSize: 10, fontBold: true }} axisLine={false} tickLine={false} />
-                           <Tooltip />
-                           <Area type="monotone" dataKey="cap" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.1} strokeWidth={4} />
-                         </AreaChart>
-                       </ResponsiveContainer>
-                     </div>
-                     <div className="grid grid-cols-2 gap-4">
-                        <div className="p-4 bg-slate-900 text-white rounded-3xl">
-                          <p className="text-[10px] font-black opacity-60 uppercase tracking-widest mb-1">Backlog Estimado (Op)</p>
-                          <p className="text-2xl font-black">+{teamStats.operation.absentOperators * 12}H</p>
-                        </div>
-                        <div className="p-4 bg-slate-50 border border-slate-200 rounded-3xl">
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Eficiência de Frota</p>
-                          <p className="text-2xl font-black text-slate-900">-{ (100 - teamStats.operation.operationalCapacity).toFixed(0)}%</p>
-                        </div>
-                     </div>
-                   </div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-10 animate-in fade-in duration-300">
-              {/* Maintenance Team Section */}
-              <div className="space-y-6">
-                <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tighter flex items-center gap-2">
-                  <Wrench className="w-7 h-7 text-indigo-600" />
-                  Gestão da Manutenção
-                </h2>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                  <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
-                     <div className="p-4 bg-indigo-50 rounded-2xl w-fit mb-4">
-                       <Activity className="w-6 h-6 text-indigo-600" />
-                     </div>
-                     <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-1">Capacidade de Reparo</h4>
-                     <p className="text-4xl font-black text-slate-900">{teamStats.maintenance.capacity.toFixed(0)}%</p>
-                     <p className="mt-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                       {teamStats.maintenance.availableMechanics} de {teamStats.maintenance.totalMechanics} Mecânicos Ativos
-                     </p>
-                  </div>
-
-                  <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm relative overflow-hidden">
-                     <div className="p-4 bg-amber-50 rounded-2xl w-fit mb-4">
-                       <Layers className="w-6 h-6 text-amber-600" />
-                     </div>
-                     <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-1">Impacto no Backlog</h4>
-                     <p className="text-4xl font-black text-slate-900">{teamStats.maintenance.backlog}</p>
-                     <p className="mt-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                       {teamStats.maintenance.awaitingMaintenance} aguardando início
-                     </p>
-                     {teamStats.maintenance.backlog > 0 && (
-                       <div className="absolute top-0 right-0 p-4">
-                         <AlertTriangle className={cn("w-5 h-5", teamStats.maintenance.backlog > 5 ? "text-red-500 animate-pulse" : "text-amber-500")} />
-                       </div>
-                     )}
-                  </div>
-
-                  <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
-                     <div className="p-4 bg-red-50 rounded-2xl w-fit mb-4">
-                       <AlertTriangle className="w-6 h-6 text-red-600" />
-                     </div>
-                     <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-1">Preventivas em Risco</h4>
-                     <p className="text-4xl font-black text-red-600">{teamStats.maintenance.preventivesAtRisk}</p>
-                     <p className="mt-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                       Máquinas próximas do limite
-                     </p>
-                  </div>
-
-                  <div className={cn(
-                    "p-8 rounded-[2.5rem] border-2 shadow-sm transition-all",
-                    teamStats.maintenance.riskLevel === 'CRITICAL' ? "bg-red-50 border-red-200" :
-                    teamStats.maintenance.riskLevel === 'HIGH' ? "bg-amber-50 border-amber-200" : "bg-emerald-50 border-emerald-200"
-                  )}>
-                     <div className={cn(
-                       "p-4 rounded-2xl w-fit mb-4",
-                       teamStats.maintenance.riskLevel === 'CRITICAL' ? "bg-red-100" : "bg-emerald-100"
-                     )}>
-                       <ShieldAlert className={cn("w-6 h-6", teamStats.maintenance.riskLevel === 'CRITICAL' ? "text-red-600" : "text-emerald-600")} />
-                     </div>
-                     <h4 className="text-sm font-black text-slate-500 uppercase tracking-widest mb-1">Previsão de Atraso</h4>
-                     <p className={cn(
-                       "text-4xl font-black",
-                       teamStats.maintenance.riskLevel === 'CRITICAL' ? "text-red-600" : "text-emerald-600"
-                     )}>~{teamStats.maintenance.estimatedDelayDays} Dias</p>
-                     <p className="mt-2 text-[9px] font-black text-slate-400 uppercase">Impacto na disponibilidade preventiva</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                  <div className="lg:col-span-2 bg-white p-10 rounded-[3rem] border border-slate-200 shadow-xl space-y-8">
-                    <div className="flex items-center gap-3">
-                      <Wrench className="w-6 h-6 text-slate-900" />
-                      <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">Status da Equipe Mecânica</h3>
-                    </div>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {users.filter(u => u.role === 'mechanic').map(user => {
-                        const absence = teamStats.maintenance.activeAbsences.find(a => a.operatorId === user.uid);
-                        return (
-                          <div key={user.uid} className="flex items-center justify-between p-5 bg-slate-50 rounded-3xl border border-slate-100 hover:border-indigo-200 transition-colors">
-                            <div className="flex items-center gap-4">
-                               <div className={cn(
-                                 "w-12 h-12 rounded-full flex items-center justify-center text-lg font-black border-2",
-                                 absence ? "bg-red-50 border-red-200 text-red-600" : "bg-indigo-50 border-indigo-200 text-indigo-600"
-                               )}>
-                                 {user.displayName?.charAt(0)}
-                               </div>
-                               <div>
-                                 <p className="text-sm font-black text-slate-900">{user.displayName}</p>
-                                 <div className="flex items-center gap-2 mt-1">
-                                    <span className={cn(
-                                      "w-2 h-2 rounded-full",
-                                      absence ? "bg-red-500" : "bg-emerald-500"
-                                    )} />
-                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                                      {absence ? 'Indisponível' : 'Disponível'}
-                                    </p>
-                                 </div>
-                               </div>
-                            </div>
-                            <div className="text-right">
-                               {absence ? (
-                                 <span className="text-[10px] font-black px-3 py-1 rounded-full bg-red-100 text-red-700 uppercase">
-                                   {absence.reason}
-                                 </span>
-                               ) : (
-                                 <span className="text-[10px] font-black px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 uppercase">
-                                   Ativo
-                                 </span>
-                               )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-900 p-10 rounded-[3rem] text-white space-y-8 shadow-2xl relative overflow-hidden">
-                    <div className="relative z-10 space-y-8">
-                      <div className="flex items-center gap-3">
-                        <Target className="w-6 h-6 text-blue-400" />
-                        <h3 className="text-xl font-black uppercase tracking-tighter">Impacto Estimado</h3>
-                      </div>
-                      
-                      <div className="space-y-6">
-                        <div className="p-6 bg-white/5 rounded-3xl border border-white/10 backdrop-blur-md">
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Acréscimo no Backlog</p>
-                          <p className="text-3xl font-black text-blue-400">+{teamStats.maintenance.absentMechanics * 8}H / Dia</p>
-                        </div>
-
-                        <div className="p-6 bg-white/5 rounded-3xl border border-white/10 backdrop-blur-md">
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Criticidade da Frota</p>
-                          <p className={cn(
-                            "text-3xl font-black",
-                            teamStats.maintenance.riskLevel === 'CRITICAL' ? "text-red-400" : "text-emerald-400"
-                          )}>{teamStats.maintenance.riskLevel}</p>
-                        </div>
-
-                        <div className="p-6 bg-blue-600 rounded-3xl shadow-xl shadow-blue-900/50">
-                          <p className="text-[10px] font-black text-white/60 uppercase tracking-widest mb-2">Velocidade de Atendimento</p>
-                          <p className="text-3xl font-black text-white">-{ (100 - teamStats.maintenance.capacity).toFixed(0)}% <span className="text-sm font-normal opacity-60">Vel.</span></p>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <Activity className="absolute -bottom-10 -right-10 w-64 h-64 text-white/5 rotate-12" />
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {activeView === 'maintenance' && (
-        <div className="space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-700">
-          
-          {/* CRITICAL MACHINES ALERT - HIGH IMPACT VIEW */}
-          {currentStatusStats.criticalMachines.length > 0 && (
-            <motion.div 
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="bg-red-50 border-2 border-red-200 p-10 rounded-[3rem] shadow-2xl relative overflow-hidden group"
-            >
-              <div className="absolute top-0 right-0 p-8 opacity-5">
-                <AlertTriangle className="w-48 h-48 text-red-600 rotate-12" />
-              </div>
-
-              <div className="flex items-center gap-6 mb-10 relative">
-                <div className="p-5 bg-red-600 text-white rounded-[1.5rem] shadow-xl shadow-red-200 bubble-animate">
-                  <ShieldAlert className="w-8 h-8" />
-                </div>
-                <div>
-                  <h2 className="text-3xl font-black text-red-950 tracking-tight uppercase">Blacklist Operacional</h2>
-                  <p className="text-red-600/80 font-black uppercase text-[10px] tracking-[0.2em]">Equipamentos com parada superior a 30 dias - Atenção Imediata</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 relative">
-                {currentStatusStats.criticalMachines.map((m: any, idx: number) => (
-                  <motion.div 
-                    initial={{ x: 20, opacity: 0 }}
-                    animate={{ x: 0, opacity: 1 }}
-                    transition={{ delay: idx * 0.1 }}
-                    key={m.id} 
-                    className="bg-white/80 backdrop-blur-md p-8 rounded-[2.5rem] shadow-xl shadow-red-900/5 border border-red-100 flex flex-col justify-between group/card hover:bg-white transition-all"
-                  >
-                    <div className="flex justify-between items-start mb-6">
-                      <div className="w-12 h-12 bg-slate-950 text-white rounded-2xl flex items-center justify-center font-black text-xs uppercase shadow-lg">
-                        {m.code.slice(0, 3)}
-                      </div>
-                      <div className="flex flex-col items-end">
-                        <span className="text-2xl font-black text-slate-950 tracking-tighter">{m.code}</span>
-                        <span className="px-3 py-1 bg-red-600 text-white text-[9px] font-black rounded-full uppercase mt-1">{m.days} DIAS</span>
-                      </div>
-                    </div>
-
-                    <div className="space-y-4 mb-8">
-                      <div className="flex flex-col">
-                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Motivo Crítico</span>
-                        <p className="text-sm text-slate-700 font-bold leading-tight">{m.reason || 'Falha Técnica Não Especificada'}</p>
-                      </div>
-                      <div className="bg-red-50/50 p-4 rounded-2xl border border-red-100/50 flex justify-between items-center">
-                        <div>
-                          <p className="text-[8px] font-black text-red-400 uppercase tracking-widest">Impacto</p>
-                          <p className="text-lg font-black text-red-600 leading-none">{m.lostHours}h</p>
-                        </div>
-                        <Activity className="w-5 h-5 text-red-200" />
-                      </div>
-                    </div>
-
-                    <div className="pt-6 border-t border-red-50 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 bg-red-600 rounded-full animate-ping" />
-                        <span className="text-[10px] font-black text-slate-900 uppercase tracking-tight">{m.status.replace('_', ' ')}</span>
-                      </div>
-                      <ArrowLeft className="w-4 h-4 text-slate-300 rotate-180 group-hover/card:translate-x-1 transition-transform" />
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-            </motion.div>
-          )}
-
-          {/* AREA 1: ANALYTICAL FLEET SUMMARY */}
-          <section>
-            <div className="flex items-center justify-between mb-10">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-blue-600 text-white rounded-2xl flex items-center justify-center shadow-2xl shadow-blue-200">
-                  <BarChart3 className="w-6 h-6" />
-                </div>
-                <div>
-                  <h2 className="text-3xl font-black text-slate-950 tracking-tight uppercase">Performance da Frota</h2>
-                  <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest">Tempo Real e Disponibilidade Sistemática</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-              {/* STATUS CARDS WITH NEW DESIGN */}
-              {[
-                { 
-                  label: 'Disponibilidade', 
-                  value: `${kpis.currentAvailability.toFixed(1)}%`, 
-                  sub: `Frota: ${uniqueForklifts.length} Maq.`,
-                  icon: Activity, 
-                  color: kpis.currentAvailability >= 90 ? 'emerald' : kpis.currentAvailability >= 85 ? 'amber' : 'red',
-                  desc: 'Equipamentos prontos p/ uso'
-                },
-                { 
-                  label: 'Horas Perdidas', 
-                  value: currentStatusStats.totalLostHours, 
-                  sub: 'Impacto Acumulado',
-                  icon: Timer, 
-                  color: 'slate',
-                  desc: 'Capacidade não utilizada'
-                },
-                { 
-                  label: 'Backlog Ativo', 
-                  value: currentStatusStats.totalStopped, 
-                  sub: `${currentStatusStats.backlog.critical} Críticos`,
-                  icon: Layers, 
-                  color: 'amber',
-                  desc: 'Aguardando intervenção'
-                },
-                { 
-                  label: 'Aging Médio', 
-                  value: currentStatusStats.aging.over15 + currentStatusStats.aging.eightTo15, 
-                  sub: 'Maquinas > 7 dias',
-                  icon: Clock, 
-                  color: 'red',
-                  desc: 'Inércia de Manutenção'
-                }
-              ].map((card, idx) => (
-                <motion.div
-                  initial={{ y: 20, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  transition={{ delay: idx * 0.1 }}
-                  key={card.label}
-                  className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm transition-all hover:shadow-2xl hover:shadow-slate-200/50 group"
-                >
-                  <div className="flex justify-between items-start mb-8">
-                    <div className={cn(
-                      "w-14 h-14 rounded-2xl flex items-center justify-center shadow-lg transition-transform group-hover:rotate-12",
-                      card.color === 'emerald' ? "bg-emerald-600 text-white" :
-                      card.color === 'amber' ? "bg-amber-600 text-white" :
-                      card.color === 'red' ? "bg-red-600 text-white" : "bg-slate-900 text-white"
-                    )}>
-                      <card.icon className="w-6 h-6" />
-                    </div>
-                    <div className="text-right">
-                       <p className="text-[10px] font-black text-slate-400 tracking-widest uppercase">{card.label}</p>
-                       <p className="text-[10px] font-bold text-slate-300 uppercase tracking-tighter mt-1">{card.desc}</p>
-                    </div>
-                  </div>
-                  
                   <div>
-                    <h3 className="text-5xl font-black text-slate-950 tracking-tighter tabular-nums mb-2">{card.value}</h3>
-                    <div className="flex items-center gap-2">
-                       <span className={cn(
-                         "w-1.5 h-1.5 rounded-full",
-                         card.color === 'emerald' ? "bg-emerald-500" :
-                         card.color === 'amber' ? "bg-amber-500" :
-                         card.color === 'red' ? "bg-red-500" : "bg-slate-400"
-                       )} />
-                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{card.sub}</span>
-                    </div>
+                    <h3 className="text-2xl font-black text-slate-900 tracking-tight">Equipa Técnica e Disponibilidade</h3>
+                    <p className="text-sm font-medium text-slate-500">Gestão de mecânicos e impacto de ausências</p>
                   </div>
-                </motion.div>
-              ))}
-            </div>
-          </section>
-
-          {/* AREA 2: ANALYTICAL HISTORY */}
-          <section className="bg-white p-12 rounded-[4rem] border border-slate-100 shadow-xl shadow-slate-200/50">
-            <div className="flex flex-col md:flex-row md:items-center justify-between mb-12 gap-6">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-emerald-600 text-white rounded-2xl flex items-center justify-center shadow-xl shadow-emerald-100">
-                  <TrendingUp className="w-6 h-6" />
                 </div>
-                <div>
-                   <h2 className="text-2xl font-black text-slate-950 tracking-tight uppercase">Saúde Operacional</h2>
-                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ciclo Mensal de Disponibilidade & Confiabilidade</p>
-                </div>
-              </div>
-              <div className="px-6 py-3 bg-slate-50 rounded-2xl border border-slate-100 flex items-center gap-4">
-                <Calendar className="w-4 h-4 text-slate-400" />
-                <span className="text-xs font-black text-slate-800 uppercase tracking-widest">
-                  {months.find(m => m.value === filterMonth)?.label || 'Anual'} {filterYear}
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-8">
-              {/* ANALYTICAL TILES */}
-              <div className="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100/60 lg:col-span-1">
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-4">Confiabilidade</p>
-                <h4 className={cn(
-                  "text-5xl font-black tracking-tighter mb-4",
-                  kpis.reliabilityScore >= 80 ? "text-emerald-600" : kpis.reliabilityScore >= 60 ? "text-amber-500" : "text-red-600"
-                )}>
-                  {kpis.reliabilityScore.toFixed(0)}<span className="text-xl font-medium text-slate-400">/100</span>
-                </h4>
-                <div className="space-y-1">
-                   <p className="text-[10px] font-black text-slate-900 uppercase">Score MTBF</p>
-                   <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
-                      <motion.div initial={{ width: 0 }} animate={{ width: `${kpis.reliabilityScore}%` }} className="h-full bg-slate-900" />
-                   </div>
-                </div>
+                <button 
+                  onClick={() => setShowAbsenceModal(true)}
+                  className="flex items-center gap-2 px-6 py-3 bg-slate-900 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg"
+                >
+                  <Plus className="w-4 h-4" /> Registrar Ausência
+                </button>
               </div>
 
-              <div className="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100/60 lg:col-span-1 flex flex-col justify-between">
-                <div>
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-4">Reparo Médio</p>
-                  <h4 className="text-3xl font-black text-slate-950">{formatDuration(kpis.mttr)}</h4>
-                </div>
-                <div className="pt-4 border-t border-slate-200/50">
-                   <span className="text-[10px] font-black text-slate-400 uppercase">Meta MTTR: {'<'} 04:00h</span>
-                </div>
-              </div>
-
-              <div className="p-8 bg-blue-50/50 rounded-[2.5rem] border border-blue-100/50 lg:col-span-1">
-                <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-4">Disponibilidade</p>
-                <h4 className={cn(
-                  "text-5xl font-black tracking-tighter mb-4",
-                  kpis.monthlyAvailability >= 90 ? "text-emerald-600" : kpis.monthlyAvailability >= 85 ? "text-amber-600" : "text-red-600"
-                )}>
-                  {kpis.monthlyAvailability.toFixed(1)}%
-                </h4>
-                <p className="text-[9px] font-black text-blue-600/60 uppercase">Resultado Período</p>
-              </div>
-
-              <div className="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100/60 lg:col-span-2 flex flex-col justify-center">
-                 <div className="flex items-center justify-between mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                 <div className="p-8 bg-slate-50 rounded-3xl border border-slate-100 flex items-center justify-between group">
                     <div>
-                       <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Novas Falhas</p>
-                       <p className="text-4xl font-black text-slate-950">{kpis.monthlyNewFailures}</p>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Capacidade Atual</p>
+                      <p className="text-4xl font-black text-slate-900">{teamStats.maintenance.capacity.toFixed(0)}%</p>
                     </div>
+                    <div className="w-16 h-16 rounded-full border-4 border-emerald-100 border-t-emerald-500 animate-spin-slow" />
+                 </div>
+                 <div className="p-8 bg-slate-50 rounded-3xl border border-slate-100 flex items-center justify-between">
                     <div>
-                       <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Concluídos</p>
-                       <p className="text-4xl font-black text-emerald-600">{kpis.monthlyCompleted}</p>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Mecânicos Ativos</p>
+                      <p className="text-4xl font-black text-slate-900">{teamStats.maintenance.availableMechanics}</p>
                     </div>
-                 </div>
-                 <div className="flex items-center gap-4">
-                    <div className="flex-1 h-3 bg-red-100 rounded-lg overflow-hidden flex">
-                       <div className="h-full bg-red-500" style={{ width: `${(kpis.correctiveCount / (kpis.monthlyNewFailures || 1)) * 100}%` }} />
-                       <div className="h-full bg-blue-500" style={{ width: `${(kpis.preventiveCount / (kpis.monthlyNewFailures || 1)) * 100}%` }} />
-                    </div>
-                    <div className="flex gap-4">
-                       <div className="flex items-center gap-1.5">
-                          <div className="w-2 h-2 bg-red-500 rounded-full" />
-                          <span className="text-[8px] font-black text-slate-600 uppercase">CORR</span>
-                       </div>
-                       <div className="flex items-center gap-1.5">
-                          <div className="w-2 h-2 bg-blue-500 rounded-full" />
-                          <span className="text-[8px] font-black text-slate-600 uppercase">PREV</span>
-                       </div>
-                    </div>
-                 </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Machine Analysis and Reliability Ranking */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <div className="bg-white p-8 rounded-[3rem] border border-slate-200 shadow-sm space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Wrench className="w-5 h-5 text-slate-900" />
-                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">Ranking de Indisponibilidade</h3>
-                </div>
-                <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-lg">Top 5 Reincidentes</span>
-              </div>
-              <div className="h-[300px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={topAffectedMachines} layout="vertical" margin={{ left: 20, right: 60 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
-                    <XAxis type="number" hide />
-                    <YAxis 
-                      type="category" 
-                      dataKey="name" 
-                      axisLine={false} 
-                      tickLine={false} 
-                      tick={{ fontSize: 10, fontWeight: 900, fill: '#64748b' }}
-                      width={120}
-                    />
-                    <Tooltip 
-                      cursor={{ fill: '#f8fafc' }}
-                      contentStyle={{ borderRadius: '16px', border: 'none', shadow: 'xl' }}
-                    />
-                    <Bar dataKey="count" fill="#1e293b" radius={[0, 8, 8, 0]} barSize={24}>
-                      <LabelList 
-                        dataKey="count" 
-                        position="right" 
-                        offset={10}
-                        style={{ fontSize: '11px', fontWeight: '900', fill: '#1e293b' }} 
-                        formatter={(v: any) => `${v} Quebras`} 
-                      />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-            <div className="bg-white p-8 rounded-[3rem] border border-slate-200 shadow-sm space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <ShieldAlert className="w-5 h-5 text-blue-500" />
-                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">Ranking de Confiabilidade (Score)</h3>
-                </div>
-                <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-lg">Score 0-100 (Disponibilidade + MTBF)</span>
-              </div>
-              <div className="h-[300px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart 
-                    data={uniqueForklifts.map(f => {
-                       const fHistory = maintenanceHistory.filter(h => h.forkliftId === f.id && h.type === 'corrective');
-                       const activeStop = activeStops.find(s => s.forkliftId === f.id);
-                       
-                       // Calculate Individual MTBF
-                       const totalHrs = (f.lastHourMeter || 0);
-                       const mtbf = fHistory.length > 0 ? totalHrs / fHistory.length : totalHrs;
-                       
-                       // Penalty for currently stopped
-                       let penalty = 0;
-                       if (activeStop) {
-                         const diffDays = Math.floor((new Date().getTime() - new Date(activeStop.stopTime).getTime()) / (1000 * 60 * 60 * 24));
-                         penalty = 50 + (diffDays * 2); // Heavy initial penalty + daily increase
-                       }
-
-                       // Simple score: normalized mtbf (0-50) + availability proxy (0-50) - penalty
-                       const mtbfScore = Math.min(50, (mtbf / 500) * 50);
-                       const availabilityScore = activeStop ? 0 : 50;
-                       const finalScore = Math.max(0, mtbfScore + availabilityScore - penalty);
-
-                       return { 
-                         name: f.model, 
-                         score: Math.round(finalScore),
-                         mtbf: Math.round(mtbf),
-                         isStopped: !!activeStop
-                       };
-                    }).sort((a, b) => b.score - a.score).slice(0, 5)} 
-                    layout="vertical" 
-                    margin={{ left: 20, right: 60 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} vertical={true} stroke="#f1f5f9" />
-                    <XAxis type="number" domain={[0, 100]} hide />
-                    <YAxis 
-                      type="category" 
-                      dataKey="name" 
-                      axisLine={false} 
-                      tickLine={false} 
-                      tick={{ fontSize: 10, fontBold: true, fill: '#64748b' }}
-                      width={100}
-                    />
-                    <Tooltip contentStyle={{ borderRadius: '16px', border: 'none' }} />
-                    <Bar dataKey="score" radius={[0, 8, 8, 0]} barSize={24}>
-                       {uniqueForklifts.map((f, index) => (
-                         <Cell key={`cell-${index}`} fill={f.status === 'available' ? '#10b981' : '#f59e0b'} />
-                       ))}
-                       <LabelList 
-                         dataKey="score" 
-                         position="right" 
-                         style={{ fontSize: '10px', fontBold: true, fill: '#1e293b' }}
-                         formatter={(v: any) => `${v}/100`}
-                       />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </div>
-
-          {/* Reasons and Parts Analysis */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <div className="bg-white p-8 rounded-[3rem] border border-slate-200 shadow-sm space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="w-5 h-5 text-red-500" />
-                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">Motivos Recorrentes</h3>
-                </div>
-                <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-lg">Por Categoria</span>
-              </div>
-              <div className="h-[300px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={maintenanceReasons} layout="vertical" margin={{ left: 20, right: 60, top: 10, bottom: 10 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} vertical={true} stroke="#f1f5f9" />
-                    <XAxis type="number" hide />
-                    <YAxis 
-                      type="category" 
-                      dataKey="name" 
-                      axisLine={false} 
-                      tickLine={false} 
-                      tick={{ fontSize: 10, fontWeight: 900, fill: '#64748b' }}
-                      width={120}
-                    />
-                    <Tooltip 
-                      cursor={{ fill: '#f8fafc' }}
-                      contentStyle={{ borderRadius: '16px', border: 'none', shadow: 'xl' }}
-                    />
-                    <Bar dataKey="value" radius={[0, 8, 8, 0]} barSize={24}>
-                      {maintenanceReasons.map((_, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    <div className="flex items-center gap-1">
+                      {Array.from({ length: 5 }).map((_, i) => (
+                         <div key={i} className={cn("w-2 h-8 rounded-full", i < teamStats.maintenance.availableMechanics ? "bg-emerald-500" : "bg-slate-200")} />
                       ))}
-                      <LabelList 
-                        dataKey="value" 
-                        position="right" 
-                        offset={10}
-                        style={{ fontSize: '12px', fontWeight: '900', fill: '#1e293b' }} 
-                        formatter={(v: any) => `${v}`} 
-                      />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+                    </div>
+                 </div>
               </div>
-            </div>
 
-            <div className="bg-white p-8 rounded-[3rem] border border-slate-200 shadow-sm space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Package className="w-5 h-5 text-amber-500" />
-                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">Consumo de Peças</h3>
-                </div>
-                <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-lg">Top 10 Itens</span>
-              </div>
-              <div className="h-[300px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={partsData} layout="vertical" margin={{ left: 20, right: 60 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} vertical={true} stroke="#f1f5f9" />
-                    <XAxis type="number" hide />
-                    <YAxis 
-                      type="category" 
-                      dataKey="name" 
-                      axisLine={false} 
-                      tickLine={false} 
-                      tick={{ fontSize: 10, fontWeight: 900, fill: '#64748b' }}
-                      width={120}
-                    />
-                    <Tooltip contentStyle={{ borderRadius: '16px', border: 'none' }} />
-                    <Bar dataKey="quantity" fill="#f59e0b" radius={[0, 8, 8, 0]} barSize={20}>
-                      <LabelList 
-                        dataKey="quantity" 
-                        position="right" 
-                        style={{ fontSize: '10px', fontBold: true, fill: '#1e293b' }}
-                      />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </div>
-          <section>
-            <div className="flex items-center justify-between mb-8">
-              <div className="flex items-center gap-3">
-                <div className="h-8 w-1.5 bg-slate-900 rounded-full" />
-                <h2 className="text-2xl font-black text-slate-900 tracking-tight uppercase">Cards de Frota</h2>
-              </div>
-              <div className="flex gap-2">
-                <div className="flex items-center gap-2 px-3 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-black rounded-lg border border-emerald-100">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                  OPERANTE
-                </div>
-                <div className="flex items-center gap-2 px-3 py-1 bg-red-50 text-red-700 text-[10px] font-black rounded-lg border border-red-100">
-                  <div className="w-2 h-2 rounded-full bg-red-500" />
-                  PARADA
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {uniqueForklifts.map(forklift => {
-                const activeStop = activeStops.find(s => s.forkliftId === forklift.id);
-                const isStopped = forklift.status === 'stopped' || forklift.status === 'maintenance' || forklift.status === 'interdicted' || forklift.status === 'external';
-                
-                const now = new Date();
-                const daysStopped = isStopped && activeStop 
-                  ? Math.floor((now.getTime() - new Date(activeStop.stopTime).getTime()) / (1000 * 60 * 60 * 24))
-                  : 0;
-
-                // Advanced Analytics per Machine
-                const fHistory = maintenanceHistory.filter(h => h.forkliftId === forklift.id);
-                const correctiveHistory = fHistory.filter(h => h.type === 'corrective');
-                
-                // Unavailability YTD (Year to Date)
-                const currentYear = new Date().getFullYear();
-                const ytdHistory = fHistory.filter(h => new Date(h.stopTime).getFullYear() === currentYear);
-                const ytdDowntimeDays = ytdHistory.reduce((acc, h) => {
-                  const hStart = new Date(h.stopTime).getTime();
-                  const hEnd = h.endTime ? new Date(h.endTime).getTime() : now.getTime();
-                  return acc + ((hEnd - hStart) / (1000 * 60 * 60 * 24));
-                }, 0);
-
-                // Reincidence (Same category failures in last 90 days)
-                const ninetyDaysAgoMoment = new Date();
-                ninetyDaysAgoMoment.setDate(ninetyDaysAgoMoment.getDate() - 90);
-                const ninetyDaysAgo = ninetyDaysAgoMoment.toISOString();
-                
-                const reincidenceMap: Record<string, number> = {};
-                correctiveHistory.filter(h => h.stopTime > ninetyDaysAgo).forEach(h => {
-                   const cat = h.category || 'Geral';
-                   reincidenceMap[cat] = (reincidenceMap[cat] || 0) + 1;
-                });
-                const topReincidence = Object.entries(reincidenceMap).sort((a,b) => b[1] - a[1])[0];
-                
-                const hoursToPreventive = (forklift.nextPreventiveHorometer || 0) - (forklift.lastHourMeter || 0);
-                const estCost = fHistory.reduce((acc, h) => acc + (h.estimatedCost || 0), 0);
-                
-                let riskScore: 'low' | 'medium' | 'high' | 'critical' = 'low';
-                if (daysStopped > 15 || correctiveHistory.length > 5 || hoursToPreventive < 0) riskScore = 'critical';
-                else if (daysStopped > 7 || correctiveHistory.length > 3 || hoursToPreventive < 20) riskScore = 'high';
-                else if (daysStopped > 3 || correctiveHistory.length > 1 || hoursToPreventive < 50) riskScore = 'medium';
-
-                const getAlertColor = () => {
-                  if (!isStopped) {
-                      if (riskScore === 'critical') return "border-red-400 bg-red-50/20";
-                      if (riskScore === 'high') return "border-amber-400 bg-amber-50/20";
-                      return "border-slate-200 bg-white";
-                  }
-                  if (daysStopped >= 30) return "border-red-600 bg-red-50 shadow-2xl shadow-red-200";
-                  if (daysStopped >= 15) return "border-red-500 bg-red-50 shadow-red-100";
-                  if (daysStopped >= 8) return "border-orange-500 bg-orange-50 shadow-orange-100";
-                  if (daysStopped >= 4) return "border-amber-500 bg-amber-50 shadow-amber-100";
-                  return "border-emerald-500 bg-emerald-50 shadow-emerald-100";
-                };
-
-                return (
-                  <div key={forklift.id} className={cn(
-                    "p-8 rounded-[3rem] border-2 transition-all duration-500 hover:scale-[1.01] cursor-default flex flex-col justify-between h-full shadow-xl relative overflow-hidden group",
-                    getAlertColor()
+              <div className="space-y-4">
+                {mecanicoStatus.map((m) => (
+                  <div key={m.uid} className={cn(
+                    "p-6 rounded-3xl border transition-all",
+                    m.isAbsent ? "bg-red-50 border-red-200" : "bg-white border-slate-100"
                   )}>
-                    {isStopped && <div className={cn("absolute top-0 right-0 w-32 h-32 rounded-bl-[5rem] pointer-events-none opacity-20", daysStopped >= 15 ? "bg-red-600" : "bg-amber-600")} />}
-                    
-                    <div>
-                      <div className="flex justify-between items-start mb-8">
-                        <div>
-                          <div className="flex items-center gap-2 mb-1">
-                            <h3 className="text-3xl font-black text-slate-900 tracking-tighter">{forklift.model}</h3>
-                            {riskScore === 'critical' && <ShieldAlert className="w-5 h-5 text-red-600 animate-pulse" />}
-                          </div>
-                          <div className="flex items-center gap-2">
-                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{forklift.serialNumber}</p>
-                             <span className="w-1 h-1 bg-slate-200 rounded-full" />
-                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{forklift.sector || 'OPERACIONAL'}</p>
-                          </div>
-                        </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
                         <div className={cn(
-                          "px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-tighter shadow-sm flex items-center gap-2",
-                          isStopped ? "bg-red-600 text-white" : "bg-emerald-600 text-white"
+                          "w-12 h-12 rounded-2xl flex items-center justify-center font-black text-xl border-2",
+                          m.isAbsent ? "bg-red-100 border-red-200 text-red-600" : "bg-emerald-50 border-emerald-100 text-emerald-600"
                         )}>
-                          <div className={cn("w-2 h-2 rounded-full", isStopped ? "bg-white animate-pulse" : "bg-emerald-200")} />
-                          {isStopped ? (daysStopped >= 30 ? 'CRÍTICO' : 'PARADA') : 'OPERANDO'}
+                          {m.displayName?.charAt(0)}
+                        </div>
+                        <div>
+                          <p className="text-base font-black text-slate-900">{m.displayName}</p>
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{m.isAbsent ? 'Ausente' : 'Disponível'}</p>
                         </div>
                       </div>
-
-                      {isStopped && activeStop ? (
-                        <div className="space-y-6">
-                            <div className="space-y-4">
-                                <div className="bg-white/60 backdrop-blur-sm p-4 rounded-2xl border border-white/50">
-                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-1">
-                                        <AlertTriangle className="w-3 h-3 text-red-500" /> Motivo da Parada
-                                    </p>
-                                    <p className="text-sm font-black text-slate-900 leading-tight">{activeStop.description}</p>
-                                    <p className="text-[8px] font-bold text-slate-400 uppercase mt-2">Quebra em: {formatDate(activeStop.stopTime)}</p>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="p-4 bg-red-600 text-white rounded-2xl shadow-lg shadow-red-100">
-                                        <p className="text-[8px] font-black opacity-80 uppercase tracking-widest mb-1">Dias Parada</p>
-                                        <p className="text-2xl font-black">{daysStopped}d</p>
-                                    </div>
-                                    <div className="p-4 bg-slate-900 text-white rounded-2xl">
-                                        <p className="text-[8px] font-black opacity-60 uppercase tracking-widest mb-1">Horas Perdidas</p>
-                                        <p className="text-2xl font-black">{daysStopped * 12}h</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="space-y-3">
-                                <div className="flex justify-between items-center bg-white/40 p-3 rounded-xl border border-white/40">
-                                    <span className="text-[9px] font-black text-slate-500 uppercase">Status Operacional</span>
-                                    <span className="text-[10px] font-black text-slate-800 uppercase px-2 py-0.5 bg-white/60 rounded-lg">{activeStop.status.replace('_', ' ')}</span>
-                                </div>
-                                <div className="flex justify-between items-center bg-white/40 p-3 rounded-xl border border-white/40">
-                                    <span className="text-[9px] font-black text-slate-500 uppercase">Indisponibilidade YTD</span>
-                                    <span className="text-[10px] font-black text-red-600 uppercase">{ytdDowntimeDays.toFixed(0)} Dias no Ano</span>
-                                </div>
-                                {topReincidence && topReincidence[1] > 1 && (
-                                    <div className="flex justify-between items-center bg-red-50/50 p-3 rounded-xl border border-red-100">
-                                        <span className="text-[9px] font-black text-red-500 uppercase">Reincidência</span>
-                                        <span className="text-[10px] font-black text-red-600 uppercase px-2 py-0.5 bg-red-100 rounded-lg">{topReincidence[1]}x {topReincidence[0]}</span>
-                                    </div>
-                                )}
-                            </div>
-                            
-                            <div className="flex items-center justify-between px-1">
-                                <div className="flex items-center gap-2">
-                                    <Package className="w-4 h-4 text-slate-400" />
-                                    <span className="text-[10px] font-bold text-slate-500 uppercase">Peças: {activeStop.status === 'awaiting_parts' ? 'Aguardando' : 'Em Mãos'}</span>
-                                </div>
-                                <span className={cn(
-                                    "text-[10px] font-black px-3 py-1 rounded-full uppercase",
-                                    riskScore === 'critical' ? "bg-red-600 text-white" : "bg-amber-100 text-amber-700"
-                                )}>
-                                    Criticidade {riskScore.toUpperCase()}
-                                </span>
-                            </div>
-                        </div>
-                      ) : (
-                        <div className="space-y-6">
-                           <div className="grid grid-cols-2 gap-4">
-                              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Disponibilidade</p>
-                                  <p className="text-xl font-black text-emerald-600 tracking-tighter">98.5%</p>
-                              </div>
-                              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Horímetro Atual</p>
-                                  <p className="text-xl font-black text-slate-900 tracking-tighter">{forklift.lastHourMeter || 0}h</p>
-                              </div>
-                           </div>
-
-                           <div className="space-y-4">
-                                <div className="space-y-1.5">
-                                    <div className="flex justify-between items-center px-1">
-                                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Próxima Preventiva</span>
-                                        <span className="text-[10px] font-black text-slate-900 uppercase">Em {hoursToPreventive}h</span>
-                                    </div>
-                                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                                        <div 
-                                          className={cn("h-full transition-all duration-1000", hoursToPreventive < 50 ? "bg-red-500" : "bg-blue-600")} 
-                                          style={{ width: `${Math.max(0, Math.min(100, 100 - (hoursToPreventive / 500 * 100)))}%` }} 
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-4 text-center">
-                                    <div className="bg-slate-50 p-2 rounded-xl border border-slate-100">
-                                        <p className="text-[8px] font-black text-slate-400 uppercase">Utilização</p>
-                                        <p className="text-xs font-black text-slate-700">8.4h/dia</p>
-                                    </div>
-                                    <div className="bg-slate-50 p-2 rounded-xl border border-slate-100">
-                                        <p className="text-[8px] font-black text-slate-400 uppercase">Produtividade</p>
-                                        <p className="text-xs font-black text-slate-700">92pk/h</p>
-                                    </div>
-                                </div>
-                                
-                                <div className="flex justify-between items-center px-1 pt-2">
-                                    <div className="flex items-center gap-2">
-                                        <Activity className="w-4 h-4 text-emerald-500" />
-                                        <span className="text-[10px] font-black text-slate-500 uppercase">Efic. Operacional</span>
-                                    </div>
-                                    <span className="text-[10px] font-black text-emerald-600">ALTA</span>
-                                </div>
-                           </div>
+                      {m.isAbsent && (
+                        <div className="text-right">
+                           <p className="text-[9px] font-black text-red-600 uppercase mb-0.5">{m.daysAbsent} Dias Ausente</p>
+                           <span className="px-3 py-1 bg-red-100 text-red-700 text-[10px] font-black rounded-lg uppercase">{m.absenceReason}</span>
                         </div>
                       )}
                     </div>
-
-                    <div className="mt-10 pt-6 border-t border-slate-100/50 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="relative">
-                            <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center">
-                                <Users className="w-4 h-4 text-slate-400" />
-                            </div>
-                            {checklists.some(c => c.forkliftId === forklift.id && c.timestamp.startsWith(new Date().toISOString().split('T')[0])) && (
-                                <div className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 border-2 border-white rounded-full flex items-center justify-center">
-                                    <UserCheck className="w-2 h-2 text-white" />
-                                </div>
-                            )}
+                    {m.isAbsent && (
+                      <div className="mt-6 grid grid-cols-2 gap-4">
+                        <div className="bg-white/60 p-4 rounded-2xl border border-red-100">
+                           <p className="text-[9px] font-black text-slate-400 uppercase mb-1">Impacto Backlog</p>
+                           <p className="text-xl font-black text-slate-900">+{m.backlogIncrease}%</p>
                         </div>
-                        <div>
-                            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Responsável Atual</p>
-                            <p className="text-[10px] font-black text-slate-900 truncate max-w-[120px] uppercase">{forklift.assignedOperatorName || '--'}</p>
+                        <div className="bg-white/60 p-4 rounded-2xl border border-red-100">
+                           <p className="text-[9px] font-black text-slate-400 uppercase mb-1">Preventivas Atrasadas</p>
+                           <p className="text-xl font-black text-red-600">{m.preventivesAtRisk}</p>
                         </div>
                       </div>
-                      <div className="text-right">
-                         <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Custo Est. YTD</p>
-                         <p className="text-xs font-black text-slate-900">{formatCurrency(estCost)}</p>
-                      </div>
-                    </div>
+                    )}
                   </div>
-                );
-              })}
-            </div>
-          </section>
-
-          {/* Parts Analysis */}
-          <div className="bg-white p-10 rounded-[3.5rem] border border-slate-200 shadow-xl space-y-8">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-blue-50 rounded-2xl text-blue-600">
-                  <Package className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-black text-slate-900 tracking-tight">Análise de Peças e Componentes</h3>
-                  <p className="text-sm font-medium text-slate-500">Itens com maior índice de substituição no período</p>
-                </div>
+                ))}
               </div>
             </div>
-            <div className="h-[400px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={partsData} margin={{ top: 20, right: 30, left: 0, bottom: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis 
-                    dataKey="name" 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{ fontSize: 11, fontWeight: 900, fill: '#64748b' }} 
-                  />
-                  <YAxis 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{ fontSize: 10, fontWeight: 800, fill: '#94a3b8' }} 
-                  />
-                  <Tooltip 
-                    cursor={{ fill: '#f8fafc' }}
-                    contentStyle={{ borderRadius: '20px', border: 'none', shadow: '2xl', padding: '16px' }}
-                  />
-                  <Bar dataKey="quantity" fill="#3b82f6" radius={[12, 12, 0, 0]} barSize={45}>
-                    <LabelList dataKey="quantity" position="top" style={{ fontSize: '12px', fontWeight: '900', fill: '#3b82f6' }} />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+
+            <div className="bg-slate-900 p-10 rounded-[3.5rem] text-white space-y-8 flex flex-col justify-between relative overflow-hidden">
+               <div className="relative z-10">
+                  <h3 className="text-xl font-black uppercase tracking-tighter mb-2">Impacto Operacional</h3>
+                  <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Risco e Atraso de Preparação</p>
+               </div>
+               
+               <div className="space-y-6 relative z-10">
+                  <div className="p-6 bg-white/5 rounded-3xl border border-white/10">
+                     <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Risco Operacional Futuro</p>
+                     <div className="flex items-center justify-between">
+                        <span className={cn(
+                           "text-2xl font-black uppercase",
+                           teamStats.maintenance.riskLevel === 'CRITICAL' ? "text-red-400" : "text-emerald-400"
+                        )}>{teamStats.maintenance.riskLevel}</span>
+                        <ShieldAlert className={cn(
+                           "w-6 h-6",
+                           teamStats.maintenance.riskLevel === 'CRITICAL' ? "text-red-400" : "text-emerald-400"
+                        )} />
+                     </div>
+                  </div>
+
+                  <div className="p-6 bg-white/5 rounded-3xl border border-white/10">
+                     <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Atraso na Preparação (Est.)</p>
+                     <div className="flex items-baseline gap-2">
+                        <span className="text-4xl font-black text-blue-400">~{teamStats.maintenance.estimatedDelayDays}</span>
+                        <span className="text-sm font-black text-slate-400 uppercase">Dias</span>
+                     </div>
+                  </div>
+
+                  <div className="p-6 bg-white/5 rounded-3xl border border-white/10">
+                     <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Preventivas Críticas</p>
+                     <div className="flex items-center justify-between">
+                        <span className="text-2xl font-black text-amber-400">{teamStats.maintenance.preventivesAtRisk}</span>
+                        <AlertTriangle className="w-6 h-6 text-amber-400" />
+                     </div>
+                  </div>
+               </div>
+
+               <div className="pt-6 border-t border-white/10 relative z-10">
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4 text-center">Gargalo de Manutenção</p>
+                  <div className="h-4 bg-white/5 rounded-full overflow-hidden flex">
+                     <div className="h-full bg-red-600" style={{ width: `${(currentStatusStats.aging.over15 / (currentStatusStats.totalStopped || 1)) * 100}%` }} />
+                     <div className="h-full bg-amber-600" style={{ width: `${(currentStatusStats.aging.eightTo15 / (currentStatusStats.totalStopped || 1)) * 100}%` }} />
+                     <div className="h-full bg-blue-600 flex-1" />
+                  </div>
+               </div>
+               <Activity className="absolute -bottom-20 -right-20 w-64 h-64 text-white/5 rotate-12" />
             </div>
+          </div>
+
+          <div className="bg-white p-10 rounded-[3.5rem] border border-slate-200 shadow-xl overflow-hidden">
+             <div className="flex items-center justify-between mb-8">
+               <h3 className="text-2xl font-black text-slate-900 tracking-tight uppercase">Máquinas Paradas</h3>
+               <span className="text-xs font-black text-slate-400 uppercase tracking-widest">{currentStatusStats.totalStopped} equipamentos em manutenção</span>
+             </div>
+             <div className="overflow-x-auto">
+               <table className="w-full">
+                 <thead>
+                   <tr className="border-b border-slate-100">
+                     <th className="px-4 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Máquina</th>
+                     <th className="px-4 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Status</th>
+                     <th className="px-4 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Tempo Parado</th>
+                     <th className="px-4 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Motivo</th>
+                     <th className="px-4 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Ação</th>
+                   </tr>
+                 </thead>
+                 <tbody className="divide-y divide-slate-50">
+                   {activeStops.map(stop => {
+                     const forklift = forklifts.find(f => f.id === stop.forkliftId);
+                     const days = Math.floor((new Date().getTime() - new Date(stop.stopTime).getTime()) / (1000 * 60 * 60 * 24));
+                     return (
+                       <tr key={stop.id} className="hover:bg-slate-50 transition-colors">
+                         <td className="px-4 py-4 font-black text-[12px] text-slate-900">{forklift?.model || '---'}</td>
+                         <td className="px-4 py-4">
+                           <span className={cn(
+                             "px-3 py-1 rounded-full text-[9px] font-black uppercase",
+                             stop.status === 'awaiting_parts' ? "bg-amber-100 text-amber-600" : "bg-blue-100 text-blue-600"
+                           )}>{stop.status.replace('_', ' ')}</span>
+                         </td>
+                         <td className="px-4 py-4 font-black text-[12px] text-slate-900">{days} Dias</td>
+                         <td className="px-4 py-4 text-[11px] font-bold text-slate-500 max-w-xs truncate">{stop.description}</td>
+                         <td className="px-4 py-4 text-right">
+                           <button className="p-2 text-slate-400 hover:text-blue-600 transition-colors">
+                             <ChevronRight className="w-5 h-5" />
+                           </button>
+                         </td>
+                       </tr>
+                     );
+                   })}
+                 </tbody>
+               </table>
+             </div>
+           </div>
+        </div>
+      )}
+
+      {activeView === 'disponibilidade' && (
+        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+             <div className="lg:col-span-1 bg-white p-10 rounded-[3.5rem] border border-slate-200 shadow-xl space-y-8 flex flex-col justify-between overflow-hidden relative">
+                <div>
+                   <p className="text-sm font-black text-slate-400 uppercase tracking-widest mb-2">Saúde da Frota</p>
+                   <h3 className="text-6xl font-black text-slate-950 tracking-tighter">{kpis.currentAvailability.toFixed(0)}%</h3>
+                   <div className="mt-4 flex items-center gap-2">
+                      <div className={cn(
+                        "px-3 py-1 rounded-full text-[10px] font-black uppercase",
+                        kpis.currentAvailability > 90 ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-600"
+                      )}>
+                        {kpis.currentAvailability > 90 ? 'Ideal' : 'Crítico'}
+                      </div>
+                   </div>
+                </div>
+                <div className="space-y-2">
+                   <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-slate-400">
+                      <span>Eficiência</span>
+                      <span>{kpis.currentAvailability.toFixed(0)}%</span>
+                   </div>
+                   <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-emerald-500" style={{ width: `${kpis.currentAvailability}%` }} />
+                   </div>
+                </div>
+                <Activity className="absolute -bottom-10 -right-10 w-48 h-48 text-slate-50 opacity-50" />
+             </div>
+
+             <div className="lg:col-span-3 bg-white p-10 rounded-[3.5rem] border border-slate-200 shadow-xl space-y-8">
+                <div className="flex items-center justify-between">
+                   <div className="flex items-center gap-3">
+                      <div className="p-3 bg-red-50 text-red-600 rounded-2xl">
+                         <ShieldAlert className="w-6 h-6" />
+                      </div>
+                      <div>
+                         <h3 className="text-xl font-black text-slate-900 tracking-tight uppercase">Blacklist Operacional</h3>
+                         <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Equipamentos com maior indisponibilidade</p>
+                      </div>
+                   </div>
+                   <div className="flex gap-2">
+                      <span className="px-4 py-2 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg">Top 5 Reincidentes</span>
+                   </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                   {topAffectedMachines.map((m, idx) => (
+                      <div key={idx} className="p-6 bg-slate-50 rounded-3xl border border-slate-100 text-center space-y-3 group hover:bg-white hover:border-red-200 transition-all cursor-help" title={`Downtime Total: ${formatDuration(m.downtime)}`}>
+                         <div className="w-12 h-12 bg-white rounded-2xl border border-slate-200 mx-auto flex items-center justify-center font-black text-red-600 shadow-sm group-hover:scale-110 transition-transform">
+                            #{idx + 1}
+                         </div>
+                         <p className="text-[12px] font-black text-slate-900 truncate">{m.name}</p>
+                         <p className="text-[10px] font-black text-red-600 bg-red-50 rounded-lg py-1 px-2 uppercase tracking-tight">{m.count} Ocorrências</p>
+                      </div>
+                   ))}
+                   {topAffectedMachines.length === 0 && (
+                      <div className="col-span-full py-12 text-center">
+                         <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
+                         <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Nenhum equipamento reincidente crítico</p>
+                      </div>
+                   )}
+                </div>
+             </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+             <div className="lg:col-span-2 bg-white p-12 rounded-[4rem] border border-slate-200 shadow-xl space-y-12">
+                <div className="flex items-center justify-between">
+                   <div className="flex items-center gap-4">
+                      <div className="p-4 bg-emerald-50 rounded-2xl text-emerald-600 shadow-lg shadow-emerald-50">
+                         <TrendingUp className="w-8 h-8" />
+                      </div>
+                      <div>
+                         <h3 className="text-3xl font-black text-slate-950 tracking-tighter uppercase">Saúde da Frota (Trend)</h3>
+                         <p className="text-sm font-medium text-slate-500">Histórico de disponibilidade semanal</p>
+                      </div>
+                   </div>
+                </div>
+                <div className="h-[350px]">
+                   <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={capacityTrend}>
+                         <defs>
+                           <linearGradient id="colorAvail" x1="0" y1="0" x2="0" y2="1">
+                             <stop offset="5%" stopColor="#10b981" stopOpacity={0.1}/>
+                             <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                           </linearGradient>
+                         </defs>
+                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                         <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 11, fontWeight: 900, fill: '#64748b' }} />
+                         <YAxis domain={[80, 100]} axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 800, fill: '#94a3b8' }} />
+                         <Tooltip contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }} />
+                         <Area type="monotone" dataKey="cap" stroke="#10b981" strokeWidth={4} fillOpacity={1} fill="url(#colorAvail)" name="Disponibilidade %" />
+                      </AreaChart>
+                   </ResponsiveContainer>
+                </div>
+             </div>
+
+             <div className="bg-slate-900 p-12 rounded-[4rem] text-white space-y-10 relative overflow-hidden">
+                <div className="relative z-10">
+                   <h3 className="text-xl font-black uppercase tracking-tighter mb-2">KPIs de Manutenção</h3>
+                   <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">Métricas de performance técnica</p>
+                </div>
+                
+                <div className="space-y-8 relative z-10">
+                   <div className="flex items-center justify-between group">
+                      <div>
+                         <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">MTTR (Reparo Médio)</p>
+                         <p className="text-3xl font-black text-white">{formatDuration(kpis.mttr)}</p>
+                      </div>
+                      <div className="p-3 bg-white/5 rounded-2xl group-hover:bg-blue-500/20 transition-all">
+                         <Timer className="w-6 h-6 text-blue-400" />
+                      </div>
+                   </div>
+                   <div className="flex items-center justify-between group">
+                      <div>
+                         <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">MTBF (Confiabilidade)</p>
+                         <p className="text-3xl font-black text-white">{kpis.mtbf.toFixed(0)}h</p>
+                      </div>
+                      <div className="p-3 bg-white/5 rounded-2xl group-hover:bg-indigo-500/20 transition-all">
+                         <Zap className="w-6 h-6 text-indigo-400" />
+                      </div>
+                   </div>
+                   <div className="flex items-center justify-between group">
+                      <div>
+                         <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Custo Perdido Impacto</p>
+                         <p className="text-3xl font-black text-amber-400">{formatCurrency(currentStatusStats.totalLostHours * 150)}</p>
+                      </div>
+                      <div className="p-3 bg-white/5 rounded-2xl group-hover:bg-amber-500/20 transition-all">
+                         <Package className="w-6 h-6 text-amber-400" />
+                      </div>
+                   </div>
+                </div>
+                
+                <div className="absolute -bottom-20 -right-20 w-64 h-64 bg-white/5 rounded-full blur-[80px]" />
+             </div>
           </div>
         </div>
       )}
+
+      {activeView === 'producao' && (
+        <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+            <KPIItem 
+              label="Produção Total" 
+              value={totalProduction.toString()}
+              subValue="Fardos Totalizados"
+              icon={<Package className="w-6 h-6" />}
+              color="blue"
+              trend="Safra 2024"
+              trendType="neutral"
+            />
+            <KPIItem 
+              label="Eficiência Média" 
+              value={`${avgProductivity}/h`}
+              subValue="Produtividade por Equipe"
+              icon={<TrendingUp className="w-6 h-6" />}
+              color="emerald"
+              trend="+12% Meta"
+              trendType="up"
+            />
+            <KPIItem 
+              label="Tempo de Espera" 
+              value={`${totalStoppedPercent}%`}
+              subValue="Impacto na Produção"
+              icon={<Clock className="w-6 h-6" />}
+              color="amber"
+              trend="Baixa Ociosidade"
+              trendType="up"
+            />
+            <KPIItem 
+              label="Taxa de Quebra" 
+              value="1.2%"
+              subValue="Perda de Fardos"
+              icon={<AlertCircle className="w-6 h-6" />}
+              color="red"
+              trend="-0.5% vs Mes Ant."
+              trendType="up"
+            />
+          </div>
+
+          <div className="bg-white p-12 rounded-[3.5rem] border border-slate-200 shadow-xl space-y-10">
+             <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                   <div className="p-4 bg-indigo-50 rounded-2xl text-indigo-600">
+                      <Target className="w-8 h-8" />
+                   </div>
+                   <div>
+                      <h3 className="text-2xl font-black text-slate-900 tracking-tight uppercase">Produção por Atividade</h3>
+                      <p className="text-sm font-medium text-slate-500">Acompanhamento de metas operacionais por pilar</p>
+                   </div>
+                </div>
+             </div>
+             
+             <div className="h-[400px] w-full">
+               <ResponsiveContainer width="100%" height="100%">
+                 <ComposedChart data={operationStats} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                   <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 900, fill: '#64748b' }} />
+                   <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 'bold', fill: '#64748b' }} />
+                   <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '25px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }} />
+                   <Bar dataKey="production" name="Realizado" fill="#6366f1" radius={[8, 8, 0, 0]} barSize={40} />
+                   <Line type="monotone" dataKey="goal" stroke="#94a3b8" strokeDasharray="8 8" dot={false} strokeWidth={3} name="Objetivo" />
+                 </ComposedChart>
+               </ResponsiveContainer>
+             </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+             <div className="bg-white p-10 rounded-[3.5rem] border border-slate-200 shadow-xl space-y-8">
+                <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight flex items-center gap-3">
+                   <TrendingUp className="w-6 h-6 text-emerald-500" />
+                   Evolução Diária (Últimos 7 dias)
+                </h3>
+                <div className="h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={dailyProductionData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 900, fill: '#64748b' }} />
+                      <Tooltip />
+                      <Bar dataKey="tirar_producao" name="Produção" fill="#10b981" radius={[4, 4, 0, 0]} barSize={12} />
+                      <Bar dataKey="quebra" name="Quebra" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={12} />
+                      <Bar dataKey="emblocamento" name="Emblocamento" fill="#8b5cf6" radius={[4, 4, 0, 0]} barSize={12} />
+                      <Bar dataKey="carregamento" name="Carregamento" fill="#f59e0b" radius={[4, 4, 0, 0]} barSize={12} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+             </div>
+
+             <div className="bg-white p-10 rounded-[3.5rem] border border-slate-200 shadow-xl space-y-8">
+                <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight flex items-center gap-3">
+                   <AlertTriangle className="w-6 h-6 text-red-500" />
+                   Ganhos vs Perdas (Bottlenecks)
+                </h3>
+                <div className="space-y-6">
+                   {operationStats.map((op, idx) => (
+                      <div key={idx} className="space-y-2">
+                         <div className="flex justify-between items-center text-[11px] font-black uppercase tracking-widest">
+                            <span className="text-slate-500">{op.name}</span>
+                            <span className={cn(
+                              op.productivity > op.goal / 8 ? "text-emerald-600" : "text-red-600"
+                            )}>
+                              {op.productivity}/h {op.productivity > op.goal / 8 ? '↑ OK' : '↓ GARGALO'}
+                            </span>
+                         </div>
+                         <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                            <div className={cn(
+                              "h-full transition-all duration-1000",
+                              op.productivity > op.goal / 8 ? "bg-emerald-500" : "bg-red-500"
+                            )} style={{ width: `${Math.min(100, (op.productivity / (op.goal / 8 || 1)) * 100)}%` }} />
+                         </div>
+                      </div>
+                   ))}
+                </div>
+             </div>
+          </div>
+        </div>
+      )}
+
+      {activeView === 'operacao' && (
+        <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+            <KPIItem 
+              label="Eficiência Humana" 
+              value={`${teamStats.operation.operationalCapacity.toFixed(0)}%`}
+              subValue="Capacidade Efetiva"
+              icon={<Users className="w-6 h-6" />}
+              color="emerald"
+              trend={teamStats.operation.riskLevel === 'CRITICAL' ? 'Risco' : 'Estável'}
+              trendType={teamStats.operation.riskLevel === 'CRITICAL' ? 'down' : 'up'}
+            />
+            <KPIItem 
+              label="Absenteísmo" 
+              value={teamStats.operation.absentOperators.toString()}
+              subValue="Colaboradores Ausentes"
+              icon={<UserMinus className="w-6 h-6" />}
+              color="red"
+              trend={`+${teamStats.operation.absentOperators * 8}h Perda`}
+              trendType="down"
+            />
+             <KPIItem 
+              label="Status de Risco" 
+              value={teamStats.operation.riskLevel}
+              subValue="Impacto na Operação"
+              icon={<ShieldAlert className="w-6 h-6" />}
+              color={teamStats.operation.riskLevel === 'CRITICAL' ? 'red' : 'indigo'}
+              trend={teamStats.operation.machineOperatorImbalance ? 'Imbalance' : 'Equilibrado'}
+              trendType="neutral"
+            />
+            <KPIItem 
+              label="Backlog Operacional" 
+              value={`${teamStats.operation.absentOperators * 12}h`}
+              subValue="Horas em Atraso"
+              icon={<Layers className="w-6 h-6" />}
+              color="amber"
+              trend="Estimado"
+              trendType="neutral"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+             <div className="bg-white p-12 rounded-[3.5rem] border border-slate-200 shadow-xl space-y-10">
+                <div className="flex items-center justify-between">
+                   <div className="flex items-center gap-4">
+                      <div className="p-4 bg-slate-900 text-white rounded-3xl">
+                         <Users className="w-8 h-8" />
+                      </div>
+                      <div>
+                         <h3 className="text-2xl font-black text-slate-900 tracking-tight uppercase">Equipe de Operação</h3>
+                         <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Status de disponibilidade em tempo real</p>
+                      </div>
+                   </div>
+                </div>
+
+                <div className="space-y-4">
+                   {users.filter(u => u.role === 'operator' || u.role === 'production').map(user => {
+                     const absence = teamStats.operation.activeAbsences.find(a => a.operatorId === user.uid);
+                     return (
+                       <div key={user.uid} className="flex items-center justify-between p-6 bg-slate-50 rounded-[2rem] border border-slate-100 hover:bg-white hover:border-blue-200 transition-all group">
+                         <div className="flex items-center gap-5">
+                            <div className={cn(
+                              "w-14 h-14 rounded-2xl flex items-center justify-center text-lg font-black border-2 transition-transform group-hover:scale-110",
+                              absence ? "bg-red-50 border-red-100 text-red-600" : "bg-emerald-50 border-emerald-100 text-emerald-600"
+                            )}>
+                              {user.displayName?.charAt(0)}
+                            </div>
+                            <div>
+                               <p className="text-base font-black text-slate-900">{user.displayName}</p>
+                               <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">{user.sector || 'INDETERMINADO'}</p>
+                            </div>
+                         </div>
+                         <div className="text-right">
+                            <span className={cn(
+                              "text-[10px] font-black px-4 py-2 rounded-xl uppercase tracking-widest",
+                              absence ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700"
+                            )}>
+                              {absence ? absence.reason : 'Disponível'}
+                            </span>
+                            {absence && <p className="text-[9px] font-black text-slate-400 mt-2 uppercase tracking-tight">Retorno: {new Date(absence.endDate).toLocaleDateString()}</p>}
+                         </div>
+                       </div>
+                     );
+                   })}
+                </div>
+             </div>
+
+             <div className="space-y-8">
+                <div className="bg-slate-900 p-12 rounded-[4rem] text-white space-y-10 relative overflow-hidden">
+                   <div className="relative z-10 space-y-10">
+                      <div className="flex items-center gap-4">
+                         <div className="p-4 bg-white/10 rounded-2xl">
+                           <LayoutDashboard className="w-8 h-8 text-blue-400" />
+                         </div>
+                         <h3 className="text-2xl font-black uppercase tracking-tighter">Impacto na Capacidade</h3>
+                      </div>
+                      
+                      <div className="h-[250px]">
+                         <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={capacityTrend}>
+                               <defs>
+                                 <linearGradient id="colorCap" x1="0" y1="0" x2="0" y2="1">
+                                   <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                                   <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                                 </linearGradient>
+                               </defs>
+                               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#ffffff10" />
+                               <XAxis dataKey="date" hide />
+                               <YAxis domain={[0, 100]} hide />
+                               <Tooltip />
+                               <Area type="monotone" dataKey="cap" stroke="#3b82f6" strokeWidth={5} fillOpacity={1} fill="url(#colorCap)" />
+                            </AreaChart>
+                         </ResponsiveContainer>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                         <div className="p-8 bg-white/5 rounded-[2.5rem] border border-white/10 backdrop-blur-md">
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Velocidade Operacional</p>
+                            <p className="text-4xl font-black text-white">{teamStats.operation.operationalCapacity.toFixed(0)}%</p>
+                            <p className="mt-2 text-[9px] font-bold text-slate-500 uppercase italic">Baseado em operários ativos</p>
+                         </div>
+                         <div className="p-8 bg-blue-600 rounded-[2.5rem] shadow-2xl shadow-blue-900/50">
+                            <p className="text-[10px] font-black text-white/60 uppercase tracking-widest mb-2">Atraso Gerencial</p>
+                            <p className="text-4xl font-black text-white">~{teamStats.operation.absentOperators > 0 ? (teamStats.operation.absentOperators * 1.5).toFixed(1) : '0'} Dias</p>
+                            <p className="mt-2 text-[9px] font-bold text-white/40 uppercase">Previsão de normalização</p>
+                         </div>
+                      </div>
+                   </div>
+                   <Activity className="absolute -bottom-10 -right-10 w-96 h-96 text-white/5 rotate-12" />
+                </div>
+
+                <div className="bg-white p-10 rounded-[3rem] border border-slate-200 shadow-xl">
+                   <div className="flex items-center gap-4 mb-8">
+                      <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl">
+                         <ShieldAlert className="w-6 h-6" />
+                      </div>
+                      <div>
+                         <h4 className="text-lg font-black text-slate-900 uppercase">Alertas de Equipe</h4>
+                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Riscos de sub-dimensionamento</p>
+                      </div>
+                   </div>
+                   <div className="space-y-4">
+                      {teamStats.operation.machineOperatorImbalance && (
+                        <div className="p-6 bg-red-50 border border-red-100 rounded-3xl flex items-center gap-4">
+                           <AlertCircle className="w-8 h-8 text-red-500" />
+                           <div>
+                              <p className="text-sm font-black text-red-900 uppercase">Gargalo Humano Detectado</p>
+                              <p className="text-xs font-bold text-red-700">Existem mais máquinas ativas do que operadores disponíveis para operação simultânea.</p>
+                           </div>
+                        </div>
+                      )}
+                      {!teamStats.operation.machineOperatorImbalance && (
+                        <div className="p-6 bg-emerald-50 border border-emerald-100 rounded-3xl flex items-center gap-4">
+                           <CheckCircle2 className="w-8 h-8 text-emerald-500" />
+                           <div>
+                              <p className="text-sm font-black text-emerald-900 uppercase">Dimensionamento OK</p>
+                              <p className="text-xs font-bold text-emerald-700">A equipe está devidamente dimensionada para a frota atual em campo.</p>
+                           </div>
+                        </div>
+                      )}
+                   </div>
+                </div>
+             </div>
+          </div>
+        </div>
+      )}
+
+      {activeView === 'executiva' && (
+        <div className="space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-700">
+          {/* Executive Overview - Cross-Pillar Dashboard */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+            <div className="bg-white p-10 rounded-[3rem] border-2 border-indigo-100 shadow-2xl relative overflow-hidden group hover:border-indigo-500 transition-all">
+                <div className="p-4 bg-indigo-50 rounded-2xl w-fit mb-6">
+                    <Wrench className="w-8 h-8 text-indigo-600" />
+                </div>
+                <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-2">Mecânica</h4>
+                <div className="flex items-baseline gap-2">
+                    <p className="text-5xl font-black text-slate-900">{kpis.reliabilityScore.toFixed(0)}</p>
+                    <span className="text-slate-400 font-bold">/100</span>
+                </div>
+                <p className="mt-4 text-[10px] font-black text-indigo-600 uppercase">Eficiência Técnica</p>
+                <div className="absolute -bottom-4 -right-4 w-24 h-24 bg-indigo-50 rounded-full opacity-50 group-hover:scale-150 transition-transform" />
+            </div>
+
+            <div className="bg-white p-10 rounded-[3rem] border-2 border-emerald-100 shadow-2xl relative overflow-hidden group hover:border-emerald-500 transition-all">
+                <div className="p-4 bg-emerald-50 rounded-2xl w-fit mb-6">
+                    <Activity className="w-8 h-8 text-emerald-600" />
+                </div>
+                <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-2">Disponibilidade</h4>
+                <p className="text-5xl font-black text-slate-900">{kpis.currentAvailability.toFixed(0)}%</p>
+                <p className="mt-4 text-[10px] font-black text-emerald-600 uppercase">Frota em Combate</p>
+                <div className="absolute -bottom-4 -right-4 w-24 h-24 bg-emerald-50 rounded-full opacity-50 group-hover:scale-150 transition-transform" />
+            </div>
+
+            <div className="bg-white p-10 rounded-[3rem] border-2 border-blue-100 shadow-2xl relative overflow-hidden group hover:border-blue-500 transition-all">
+                <div className="p-4 bg-blue-50 rounded-2xl w-fit mb-6">
+                    <TrendingUp className="w-8 h-8 text-blue-600" />
+                </div>
+                <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-2">Produção</h4>
+                <p className="text-5xl font-black text-slate-900">{totalProduction}</p>
+                <p className="mt-4 text-[10px] font-black text-blue-600 uppercase">Fardos Totais</p>
+                <div className="absolute -bottom-4 -right-4 w-24 h-24 bg-blue-50 rounded-full opacity-50 group-hover:scale-150 transition-transform" />
+            </div>
+
+            <div className="bg-white p-10 rounded-[3rem] border-2 border-orange-100 shadow-2xl relative overflow-hidden group hover:border-orange-500 transition-all">
+                <div className="p-4 bg-orange-50 rounded-2xl w-fit mb-6">
+                    <Users className="w-8 h-8 text-orange-600" />
+                </div>
+                <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-2">Operação</h4>
+                <p className="text-5xl font-black text-slate-900">{teamStats.operation.operationalCapacity.toFixed(0)}%</p>
+                <p className="mt-4 text-[10px] font-black text-orange-600 uppercase">Capacidade Humana</p>
+                <div className="absolute -bottom-4 -right-4 w-24 h-24 bg-orange-50 rounded-full opacity-50 group-hover:scale-150 transition-transform" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+             <div className="bg-slate-950 p-12 rounded-[4rem] text-white space-y-10 relative overflow-hidden">
+                <div className="relative z-10 space-y-10">
+                    <h3 className="text-3xl font-black uppercase tracking-tighter">Status Gerencial</h3>
+                    <div className="space-y-6">
+                        <div className="flex items-center justify-between p-6 bg-white/5 rounded-3xl border border-white/10">
+                            <span className="text-sm font-black uppercase text-slate-400">Eficiência de Safra</span>
+                            <span className="text-2xl font-black text-blue-400">{(avgProductivity / (operationStats[0]?.goal / 12 || 100) * 100).toFixed(0)}%</span>
+                        </div>
+                        <div className="flex items-center justify-between p-6 bg-white/5 rounded-3xl border border-white/10">
+                            <span className="text-sm font-black uppercase text-slate-400">Risco de Preparação</span>
+                            <span className={cn(
+                                "text-2xl font-black",
+                                teamStats.maintenance.riskLevel === 'CRITICAL' ? "text-red-400" : "text-emerald-400"
+                            )}>{teamStats.maintenance.riskLevel}</span>
+                        </div>
+                        <div className="flex items-center justify-between p-6 bg-white/5 rounded-3xl border border-white/10">
+                            <span className="text-sm font-black uppercase text-slate-400">Máquinas Fora de Combate</span>
+                            <span className="text-2xl font-black text-amber-400">{currentStatusStats.criticalMachines.length}</span>
+                        </div>
+                    </div>
+                </div>
+                <Activity className="absolute -bottom-20 -right-20 w-96 h-96 text-white/5 rotate-12" />
+             </div>
+
+             <div className="bg-white p-12 rounded-[4rem] border border-slate-200 shadow-xl space-y-10">
+                <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">Resumo de Produção (Últimos 7 dias)</h3>
+                <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={dailyProductionData}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                            <XAxis dataKey="date" tick={{ fontSize: 10, fontWeight: 'bold' }} axisLine={false} tickLine={false} />
+                            <YAxis hide />
+                            <Tooltip />
+                            <Area type="monotone" dataKey="tirar_producao" name="Produção" stroke="#10b981" fill="#10b981" fillOpacity={0.1} strokeWidth={4} />
+                            <Area type="monotone" dataKey="quebra" name="Quebra" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.1} strokeWidth={4} />
+                        </AreaChart>
+                    </ResponsiveContainer>
+                </div>
+             </div>
+          </div>
+        </div>
+      )}
+
+      {activeView === 'safra' && <SafraImpactDashboard />}
 
       {/* Absence Management Modal */}
       {showAbsenceModal && (

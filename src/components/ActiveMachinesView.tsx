@@ -201,7 +201,7 @@ export function ActiveMachinesView({ onNavigate }: { onNavigate?: (view: string)
                 isMedium ? "bg-amber-50 text-amber-600 border-amber-100" : 
                 "bg-blue-50 text-blue-600 border-blue-100"
               )}>
-                {isCritical ? 'CRITICAL - QUEBRA' : isMedium ? 'MEDIUM - FALHA' : 'LOW - REPARO'}
+                {isCritical ? 'CRITICAL - QUEBRA' : isMedium ? 'MEDIUM - FALHA' : (isPending ? 'LOW - SOLICITAÇÃO' : 'LOW - REPARO')}
               </span>
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                 OP: {stop.operatorName || 'Não ident.'}
@@ -233,7 +233,9 @@ export function ActiveMachinesView({ onNavigate }: { onNavigate?: (view: string)
           <div className="grid grid-cols-2 gap-3 w-full sm:w-auto">
             <div className="bg-white p-3 rounded-2xl border border-slate-100 min-w-[110px] shadow-sm">
               <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Atendimento</span>
+                <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">
+                  {isPending ? 'Espera' : 'Resposta'}
+                </span>
                 <Clock className="w-3 h-3 text-slate-300" />
               </div>
               <p className={cn(

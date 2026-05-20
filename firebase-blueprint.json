@@ -74,6 +74,30 @@
         "notes": { "type": "string" }
       },
       "required": ["operatorId", "startDate", "endDate", "reason"]
+    },
+    "SafraPeriod": {
+      "title": "Safra Period",
+      "description": "Definition of safra and entressafra periods.",
+      "type": "object",
+      "properties": {
+        "year": { "type": "number" },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "type": { "type": "string", "enum": ["safra", "entressafra"] },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["year", "startDate", "endDate", "type", "isActive"]
+    },
+    "Checklist": {
+      "title": "Checklist",
+      "description": "Pre-operation machine safety checklist.",
+      "type": "object",
+      "properties": {
+        "forkliftId": { "type": "string" },
+        "operatorId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "items": { "type": "object" }
+      }
     }
   },
   "firestore": {
@@ -100,6 +124,18 @@
     "/operator_absences/{absenceId}": {
       "schema": "OperatorAbsence",
       "description": "Operator absence records."
+    },
+    "/safra_periods/{periodId}": {
+      "schema": "SafraPeriod",
+      "description": "Safra and entressafra periods."
+    },
+    "/checklists/{checklistId}": {
+      "schema": "Checklist",
+      "description": "Machine checklists."
+    },
+    "/operation_goals/{goalId}": {
+      "schema": "object",
+      "description": "Production goals."
     }
   }
 }

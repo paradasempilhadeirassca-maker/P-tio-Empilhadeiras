@@ -529,7 +529,7 @@ export function PreventiveView() {
                     <div className="w-10 h-10 bg-white/10 rounded-lg flex items-center justify-center"><User className="w-5 h-5 text-emerald-400" /></div>
                     <div>
                       <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Responsável</p>
-                      <p className="text-xs font-black uppercase tracking-tight">{profile.displayName}</p>
+                      <p className="text-xs font-black uppercase tracking-tight">{profile?.displayName || 'Mecânico'}</p>
                     </div>
                   </div>
                   <div className="text-right">

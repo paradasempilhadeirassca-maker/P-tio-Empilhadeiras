@@ -7,6 +7,7 @@ export interface UserProfile {
   role: UserRole;
   createdAt: string;
   password?: string; // Stored for simple recovery (no email)
+  sector?: string;
 }
 
 export type ForkliftStatus = 'available' | 'stopped' | 'maintenance' | 'at_risk' | 'interdicted' | 'external' | 'standby' | 'reserva';
@@ -39,7 +40,7 @@ export interface Forklift {
 }
 
 export type MaintenanceType = 'corrective' | 'preventive';
-export type MaintenanceCategory = 'Motor' | 'Hidráulico' | 'Elétrica' | 'Transmissão' | 'Pneus' | 'Estrutural' | 'Acidente operacional' | 'Falta de peça' | 'Preventiva' | 'Outro';
+export type MaintenanceCategory = 'Motor' | 'Hidráulico' | 'Elétrica' | 'Transmissão' | 'Pneus' | 'Estrutural' | 'Acidente operacional' | 'Falta de peça' | 'Preventiva' | 'Reforma' | 'Outro';
 export type MaintenanceStatus = 'pending' | 'in_progress' | 'awaiting_parts' | 'completed' | 'awaiting_mechanic' | 'awaiting_budget' | 'interdicted' | 'external';
 
 export interface Part {
@@ -90,7 +91,7 @@ export interface MaintenanceStop {
   stopTime: string;
   startTime?: string;
   endTime?: string;
-  waitingPartsStartTime?: string;
+  waitingPartsStartTime?: string | null;
   totalWaitingPartsMinutes?: number;
   pendingPartsList?: string[];
   description: string;
@@ -216,7 +217,8 @@ export enum AbsenceReason {
   TRAINING = 'Treinamento',
   PERSONAL = 'Licença/Pessoal',
   ABSENT = 'Falta',
-  REMOVED = 'Afastado'
+  REMOVED = 'Afastado',
+  SUSPENSION = 'Suspensão'
 }
 
 export interface OperatorAbsence {
@@ -229,4 +231,25 @@ export interface OperatorAbsence {
   endDate: string;
   reason: AbsenceReason;
   notes?: string;
+  createdAt?: string;
+}
+
+export interface SafraPeriod {
+  id: string;
+  year: number;
+  startDate: string;
+  endDate: string;
+  type: 'safra' | 'entressafra';
+  isActive: boolean;
+}
+
+export interface OperationalImpact {
+  absenceId: string;
+  mechanicName: string;
+  backlogIncreaseHours: number;
+  preventivesDelayedCount: number;
+  availabilityImpactPercent: number;
+  harvestPreparationDelayDays: number;
+  operationalRiskScore: number;
+  timestamp: string;
 }

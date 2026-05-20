@@ -102,7 +102,12 @@ function AppContent() {
       case 'leader-apontamento': return <LeaderView />;
       case 'operational-indicators': return <OperationalIndicators />;
       case 'fleet': return <FleetManagement />;
-      case 'history': return <MaintenanceHistory role={profile.role} />;
+      case 'history': {
+        const historyRole = (profile.role === 'manager' || profile.role === 'leader') 
+          ? 'manager' 
+          : (profile.role === 'mechanic' ? 'mechanic' : 'operator');
+        return <MaintenanceHistory role={historyRole} />;
+      }
       default: return <div className="p-8 text-center">Selecione uma opção no menu.</div>;
     }
   };

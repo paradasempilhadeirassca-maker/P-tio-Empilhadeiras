@@ -728,7 +728,7 @@ export function LeaderView() {
           data.averageOperators = parseFloat((data.weightTimeOperators / data.minutes).toFixed(1));
           const timeHours = data.minutes / 60;
           const manHours = timeHours * data.averageOperators;
-          data.productivityPerManHour = manHours > 0 ? parseFloat((data.production / manHours).toFixed(2)) : 0;
+          data.productivityPerManHour = manHours > 0 ? parseFloat((data.production / manHours).toFixed(1)) : 0;
         }
       });
 
@@ -1582,7 +1582,8 @@ export function LeaderView() {
                                 "text-[10px] px-2 py-0.5 rounded-full font-black uppercase",
                                 stop.severity === 'high' ? "bg-red-50 text-red-600" : "bg-amber-50 text-amber-600"
                               )}>
-                                {stop.severity === 'high' ? 'Parada Crítica' : 'Intervenção / Atendimento'}
+                                {stop.severity === 'high' ? 'Parada Crítica' : 
+                                 stop.status === 'pending' ? 'Pedido de Reparo' : 'Atendimento em Curso'}
                               </span>
                             </div>
                             <p className="text-xs text-slate-600 font-medium italic mt-1 leading-tight">
