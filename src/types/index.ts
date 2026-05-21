@@ -204,8 +204,8 @@ export interface Checklist {
   timestamp: string;
   items: ChecklistItem[];
   notes?: string;
-  initialHourMeter: number;
-  finalHourMeter: number;
+  initialHourMeter?: number | null;
+  finalHourMeter?: number | null;
   shift: ShiftType;
   checklistScore: number;
 }

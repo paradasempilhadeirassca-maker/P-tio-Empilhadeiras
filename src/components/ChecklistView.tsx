@@ -36,7 +36,7 @@ const DEFAULT_ITEMS = [
 export function ChecklistView() {
   const { profile, loading: authLoading, setQuotaExceeded } = useAuth();
   const { showToast } = useToast();
-  const { forklifts, activeStops, refreshGlobalData } = useData();
+  const { forklifts, uniqueForklifts, activeStops, refreshGlobalData } = useData();
   const [checklists, setChecklists] = useState<Checklist[]>([]);
   const [selectedForklift, setSelectedForklift] = useState<string>('');
   const [items, setItems] = useState<ChecklistItem[]>(
@@ -127,55 +127,7 @@ export function ChecklistView() {
     }
   }, [selectedForklift, setQuotaExceeded]); // Strictly on selection change
 
-  const uniqueForklifts = useMemo(() => {
-    // Determine which machines have active maintenance occurrences
-    const machineStatusMap = new Map<string, ForkliftStatus>();
-    activeStops.forEach(stop => {
-      const f = forklifts.find(fork => fork.id === stop.forkliftId);
-      if (f?.serialNumber) {
-        const serial = f.serialNumber.trim().toLowerCase();
-        const severity = stop.severity || 'high';
-        const targetStatus: ForkliftStatus = severity === 'high' ? 'stopped' : 'maintenance';
-        
-        const existingStatus = machineStatusMap.get(serial);
-        if (!existingStatus || (existingStatus === 'maintenance' && targetStatus === 'stopped')) {
-          machineStatusMap.set(serial, targetStatus);
-        }
-      }
-    });
 
-    const fleetMap = new Map<string, Forklift>();
-    
-    // Deduplicate by serial, using most recent createdAt
-    const sorted = [...forklifts].sort((a, b) => {
-      const dateA = (a as any).createdAt || '';
-      const dateB = (b as any).createdAt || '';
-      return dateB.localeCompare(dateA);
-    });
-
-    sorted.forEach(f => {
-      const serial = (f.serialNumber || '').trim().toLowerCase();
-      const key = serial || f.id;
-      
-      if (!fleetMap.has(key)) {
-        const enriched = { ...f };
-        const activeStatus = serial ? machineStatusMap.get(serial) : null;
-        
-        if (activeStatus) {
-          enriched.status = activeStatus;
-        } else if (enriched.status === 'stopped' || enriched.status === 'maintenance') {
-          // If no active occurrence, it must be operational
-          enriched.status = 'available';
-        }
-        fleetMap.set(key, enriched);
-      }
-    });
-
-    // Operators shouldn't do checklists for stopped machines
-    return Array.from(fleetMap.values())
-      .filter(f => f.status !== 'stopped' && f.status !== 'maintenance')
-      .sort((a, b) => (a.serialNumber || '').localeCompare(b.serialNumber || ''));
-  }, [forklifts, activeStops]);
 
   const filteredForklifts = useMemo(() => {
     return uniqueForklifts.filter(f => 
@@ -207,15 +159,16 @@ export function ChecklistView() {
       return;
     }
 
-    const currentMeter = parseFloat(finalHourMeter);
-    const fetchedInitial = initialHourMeter ? parseFloat(initialHourMeter) : currentMeter;
+    const hasMeter = finalHourMeter.trim() !== '';
+    const currentMeter = hasMeter ? parseFloat(finalHourMeter) : null;
+    const fetchedInitial = initialHourMeter ? parseFloat(initialHourMeter) : null;
 
-    if (isNaN(currentMeter) || !selectedForklift) {
+    if (hasMeter && isNaN(currentMeter as number)) {
       showToast('Por favor, informe o horímetro atual corretamente.', 'error');
       return;
     }
 
-    if (currentMeter < fetchedInitial) {
+    if (hasMeter && currentMeter !== null && fetchedInitial !== null && currentMeter < fetchedInitial) {
       showToast(`O horímetro não pode ser menor que o último registro (${fetchedInitial}).`, 'error');
       return;
     }
@@ -242,11 +195,14 @@ export function ChecklistView() {
       const addPromise = addDoc(collection(db, 'checklists'), checklistData);
       
       // Update forklift last hour meter and status
-      const updatePromise = updateDoc(doc(db, 'forklifts', selectedForklift), {
-        lastHourMeter: currentMeter,
-        lastHourMeterUpdate: new Date().toISOString(),
+      const updateData: any = {
         status: hasMajorIssues ? 'at_risk' : 'available'
-      });
+      };
+      if (currentMeter !== null) {
+        updateData.lastHourMeter = currentMeter;
+        updateData.lastHourMeterUpdate = new Date().toISOString();
+      }
+      const updatePromise = updateDoc(doc(db, 'forklifts', selectedForklift), updateData);
 
       const result = await Promise.race([
         Promise.all([addPromise, updatePromise]),
@@ -273,7 +229,7 @@ export function ChecklistView() {
         `📋 *CHECK-LIST OPERACIONAL*\n\n` +
         `*Máquina:* ${machineName}\n` +
         `*Operador:* ${profile.displayName || profile.email}\n` +
-        `*Horímetro:* ${currentMeter}\n` +
+        `*Horímetro:* ${currentMeter !== null ? currentMeter : 'Não informado'}\n` +
         `*Conformidade:* ${checklistScore.toFixed(0)}%\n` +
         `*Status:* ${hasMajorIssues ? '⚠️ IRREGULAR' : '✅ OK'}\n` +
         (hasMajorIssues ? `*Irregularidades:* ${items.filter(i => !i.isConform).map(i => `\n- ${i.label}: ${i.description}`).join('')}\n` : '') +
@@ -510,7 +466,7 @@ export function ChecklistView() {
 
             <div className="space-y-4">
               <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 font-black">Horímetro Atual *</label>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 font-black">Horímetro Atual (Opcional)</label>
                 <input
                   type="number"
                   step="0.1"
@@ -518,7 +474,6 @@ export function ChecklistView() {
                   onChange={(e) => setFinalHourMeter(e.target.value)}
                   className="w-full p-6 bg-slate-50 border border-slate-200 rounded-[2rem] text-2xl font-black text-center outline-none border-b-8 border-b-blue-200 focus:border-b-blue-500 transition-all shadow-inner"
                   placeholder="0.0"
-                  required
                 />
                 <p className="text-[10px] text-slate-400 font-bold mt-2 text-center uppercase tracking-widest">Informe a leitura do painel da máquina</p>
               </div>

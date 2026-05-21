@@ -144,11 +144,11 @@ service cloud.firestore {
       allow update: if isSignedIn() && isValidId(forkliftId) && (
         isManager() || 
         (
-          // Action: Status/Update (Mecânico ou Líder)
+          // Action: Status/Update (Mecânico, Líder, Operador, ou qualquer outro usuário logado)
           incoming().diff(existing()).affectedKeys().hasOnly([
             'status', 'lastHourMeter', 'lastMaintenance', 'nextPreventiveHorometer', 
             'lastPreventiveHorometer', 'lastHourMeterUpdate', 'lastUpdate'
-          ]) && (isLeader() || isMechanic() || isOperator())
+          ]) && isSignedIn()
         )
       );
     }
@@ -176,7 +176,7 @@ service cloud.firestore {
 
     match /checklists/{checklistId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && (isOperator() || isLeader()) && incoming().operatorId == request.auth.uid;
+      allow create: if isSignedIn() && incoming().operatorId == request.auth.uid;
       allow update, delete: if isManager();
     }
 

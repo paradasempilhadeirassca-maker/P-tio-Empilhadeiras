@@ -65,6 +65,13 @@ const parseDateSafe = (val: any): Date => {
   return new Date();
 };
 
+const getLocalDateString = (d: Date = new Date()): string => {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 function KPIItem({ label, value, subValue, icon, color, trend, trendType }: { 
   label: string; 
   value: string; 
@@ -127,8 +134,8 @@ export function ManagerDashboard() {
 
   // Mechanic presence/absence (pointing) states
   const [selectedMechanicId, setSelectedMechanicId] = useState<string>('');
-  const [absenceStartDate, setAbsenceStartDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  const [absenceEndDate, setAbsenceEndDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [absenceStartDate, setAbsenceStartDate] = useState<string>(getLocalDateString());
+  const [absenceEndDate, setAbsenceEndDate] = useState<string>(getLocalDateString());
   const [absenceReason, setAbsenceReason] = useState<AbsenceReason>(AbsenceReason.DAY_OFF);
   const [absenceNotes, setAbsenceNotes] = useState<string>('');
   const [isLoggingAbsence, setIsLoggingAbsence] = useState<boolean>(false);
@@ -512,8 +519,12 @@ export function ManagerDashboard() {
   }, [filteredHistory]);
 
   const machinesMissingChecklist = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
-    const machinesWithChecklist = new Set(checklists.filter(c => c.timestamp.startsWith(today)).map(c => c.forkliftId));
+    const today = getLocalDateString();
+    const machinesWithChecklist = new Set(
+      checklists
+        .filter(c => getLocalDateString(parseDateSafe(c.timestamp)) === today)
+        .map(c => c.forkliftId)
+    );
     return forklifts
       .filter(f => filterForklift === 'all' || f.id === filterForklift)
       .filter(f => f.status === 'available' && !machinesWithChecklist.has(f.id));
@@ -545,7 +556,7 @@ export function ManagerDashboard() {
   }, [filteredHistory]);
 
   const teamStats = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalDateString();
     const activeAbsences = absences.filter(a => today >= a.startDate && today <= a.endDate);
     
     // Operation Stats
@@ -618,7 +629,7 @@ export function ManagerDashboard() {
   }, [absences, users, uniqueForklifts, activeStops]);
 
   const mechanicAvailabilityMetrics = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalDateString();
     const mechanicUsers = users.filter(u => u.role === 'mechanic');
     const totalMechs = mechanicUsers.length || 2;
 
@@ -761,7 +772,7 @@ export function ManagerDashboard() {
   };
 
   const mecanicoStatus = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalDateString();
     const mechanicUsers = users.filter(u => u.role === 'mechanic');
     const mechanicAbsences = absences.filter(a => a.role === 'mechanic' && today >= a.startDate && today <= a.endDate);
     
@@ -1299,14 +1310,14 @@ export function ManagerDashboard() {
   }, [filteredChecklists, filteredEvents]);
 
   const checklistVolumeData = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalDateString();
     return forklifts
       .filter(f => filterForklift === 'all' || f.id === filterForklift)
       .map(f => {
         const name = `${f.model} (${f.serialNumber})`;
         const count = filteredChecklists.filter(cl => cl.forkliftId === f.id).length;
         const isDoneToday = filteredChecklists.some(cl => 
-          cl.forkliftId === f.id && cl.timestamp.startsWith(today)
+          cl.forkliftId === f.id && getLocalDateString(parseDateSafe(cl.timestamp)) === today
         );
         return { name, count, isDoneToday, status: f.status };
       })
@@ -1349,10 +1360,57 @@ export function ManagerDashboard() {
   const completedRepairs = filteredHistory.filter(h => h.status === 'completed').length;
   const inProgressRepairs = filteredHistory.filter(h => h.status === 'in_progress' || h.status === 'awaiting_parts').length;
 
-  // Awaiting Parts metrics
-  const awaitingPartsStops = useMemo(() => {
-    return activeStops.filter(s => s.status === 'awaiting_parts' && matchesForkliftFilter(s.forkliftId, filterForklift));
-  }, [activeStops, filterForklift, matchesForkliftFilter]);
+  // Breakdown of stops by severity/type (Parada, Reparo, Falha Iminente) for Card 2
+  const stopsSeverityStats = useMemo(() => {
+    let paradas = 0;
+    let falhasIminentes = 0;
+    let reparos = 0;
+
+    filteredHistory.forEach(h => {
+      // severity types -> low: Reparo, medium: Falha Iminente, high: Parada, critical: Parada Critica
+      const sev = h.severity || (h.type === 'preventive' ? 'low' : 'high');
+      if (sev === 'high' || sev === 'critical') {
+        paradas++;
+      } else if (sev === 'medium') {
+        falhasIminentes++;
+      } else {
+        reparos++;
+      }
+    });
+
+    return { paradas, falhasIminentes, reparos };
+  }, [filteredHistory]);
+
+  // Active stops stats breakdown for Card 5 (Relação de Paradas Atuais)
+  const activeStopsStats = useMemo(() => {
+    const stops = activeStops.filter(s => {
+      // Filter severity: High/Critical means 'Parada' (não queremos reparo 'low' ou falha iminente 'medium')
+      const sev = s.severity || (s.type === 'preventive' ? 'low' : 'high');
+      const isParada = sev === 'high' || sev === 'critical';
+
+      return isParada;
+    });
+
+    const awaitingParts = stops.filter(s => s.status === 'awaiting_parts');
+    const inProgress = stops.filter(s => s.status === 'in_progress');
+    const onStandby = stops.filter(s => s.status !== 'awaiting_parts' && s.status !== 'in_progress');
+
+    // Get list of unique fleets / models of active stops
+    const affectedFleets = Array.from(new Set(stops.map(s => {
+      const f = uniqueForklifts.find(fork => fork.id === s.forkliftId);
+      return f ? `${f.model}` : s.forkliftId;
+    })));
+
+    return {
+      stops,
+      awaitingParts,
+      inProgress,
+      onStandby,
+      affectedFleets
+    };
+  }, [activeStops, uniqueForklifts]);
+
+  const awaitingPartsStops = activeStopsStats.awaitingParts;
 
   // Preventive Maintenance stats (Vencidas, A Vencer, OK)
   const preventiveMaintenanceStats = useMemo(() => {
@@ -1364,47 +1422,65 @@ export function ManagerDashboard() {
     const vencidasList: Forklift[] = [];
     const aVencerList: Forklift[] = [];
     const okList: Forklift[] = [];
+    
+    const targetedForklifts = filterForklift === 'all' 
+      ? uniqueForklifts 
+      : uniqueForklifts.filter(f => f.id === filterForklift);
 
-    uniqueForklifts.forEach(f => {
-      const status = getMaintenanceStatus(f.lastHourMeter || 0, f.nextPreventiveHorometer || 0, f.lastHourMeterUpdate);
-      if (status === 'vencida') {
-        vencidas++;
-        vencidasList.push(f);
-      } else if (status === 'proxima') {
-        aVencer++;
-        aVencerList.push(f);
-      } else if (status === 'desatualizado') {
-        desatualizadas++;
-      } else {
-        ok++;
-        okList.push(f);
-      }
-    });
+    if (filterMonth === 'all') {
+      targetedForklifts.forEach(f => {
+        const status = getMaintenanceStatus(f.lastHourMeter || 0, f.nextPreventiveHorometer || 0, f.lastHourMeterUpdate);
+        if (status === 'vencida') {
+          vencidas++;
+          vencidasList.push(f);
+        } else if (status === 'proxima') {
+          aVencer++;
+          aVencerList.push(f);
+        } else if (status === 'desatualizado') {
+          desatualizadas++;
+        } else {
+          ok++;
+          okList.push(f);
+        }
+      });
+    } else {
+      // Monthly views: compute metrics from filtered range maintenance stops of type 'preventive'
+      const completedPreventives = filteredHistory.filter(h => h.type === 'preventive' && h.status === 'completed');
+      const pendingPreventives = filteredHistory.filter(h => h.type === 'preventive' && h.status !== 'completed');
+
+      ok = completedPreventives.length;
+      vencidas = pendingPreventives.filter(h => h.status === 'pending' || h.status === 'interdicted').length;
+      aVencer = pendingPreventives.filter(h => h.status === 'in_progress' || h.status === 'awaiting_parts').length;
+      desatualizadas = 0;
+    }
 
     return { vencidas, aVencer, ok, desatualizadas, vencidasList, aVencerList, okList };
-  }, [uniqueForklifts]);
+  }, [uniqueForklifts, filterMonth, filteredHistory, filterForklift]);
 
-  // Check-list Compliance stats for today
+  // Check-list Compliance stats for today (unaffected by filters)
   const checklistComplianceToday = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
-    const completedToday = checklists.filter(c => c.timestamp.startsWith(today) && (filterForklift === 'all' || c.forkliftId === filterForklift)).length;
-    
-    // Total operating forklifts (status available in uniqueForklifts)
-    const operatingForklifts = uniqueForklifts.filter(f => f.status === 'available' && (filterForklift === 'all' || f.id === filterForklift));
-    const totalOperating = operatingForklifts.length;
-    const missingCount = machinesMissingChecklist.length;
-
-    const compliancePercentage = totalOperating > 0 
-      ? Math.min(100, Math.round((completedToday / totalOperating) * 100))
+    const today = getLocalDateString();
+    const completedTodayForkliftIds = new Set(
+      checklists
+        .filter(c => getLocalDateString(parseDateSafe(c.timestamp)) === today)
+        .map(c => c.forkliftId)
+    );
+    const completedTodayCount = completedTodayForkliftIds.size;
+    const totalRegistered = uniqueForklifts.length;
+    const compliancePercentage = totalRegistered > 0
+      ? Math.min(100, Math.round((completedTodayCount / totalRegistered) * 100))
       : 100;
 
+    const pendingForklifts = uniqueForklifts.filter(f => !completedTodayForkliftIds.has(f.id));
+
     return {
-      completedToday,
-      totalOperating,
-      missingCount,
-      compliancePercentage
+      completedToday: completedTodayCount,
+      totalOperating: totalRegistered,
+      compliancePercentage,
+      pendingForklifts,
+      isMonthly: false
     };
-  }, [checklists, uniqueForklifts, machinesMissingChecklist, filterForklift]);
+  }, [checklists, uniqueForklifts]);
 
   return (
     <div id="simplified-manager-dashboard" className="max-w-7xl mx-auto p-4 md:p-6 space-y-8 animate-in fade-in duration-500">
@@ -1483,307 +1559,582 @@ export function ManagerDashboard() {
       {(() => {
         const REASONS_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#3b82f6', '#ec4899', '#14b8a6'];
 
-        return (
-          <div className="space-y-10 animate-in fade-in duration-500">
-            {/* KPI Cards Grid */}
-            <div id="dashboard-metrics-grid" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              
-              {/* Card 1: Disponibilidade do Período */}
-              <div id="metric-card-availability" className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
-                <div>
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">
-                        <Activity className="w-4 h-4" />
+         return (
+          <div className="space-y-10 animate-in fade-in duration-500 font-sans">
+            {/* Seção 1: Indicadores do Período Selecionado */}
+            <div id="section-period-indicators" className="space-y-4">
+              <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+                <span className="w-1.5 h-4 bg-blue-600 rounded-full" />
+                <h3 className="text-xs font-black uppercase text-slate-400 tracking-wider">
+                  Métricas & Indicadores do Período Selecionado (Afetados por Filtros)
+                </h3>
+              </div>
+
+              <div id="dashboard-period-metrics-grid" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {/* Card 1: Disponibilidade do Período */}
+                <div id="metric-card-availability" className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
+                  <div>
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">
+                          <Activity className="w-4 h-4" />
+                        </div>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Disponibilidade do Período</p>
                       </div>
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Disponibilidade do Período</p>
+                      <span className={cn(
+                        "text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider",
+                        kpis.monthlyAvailability >= 90 ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"
+                      )}>
+                        {kpis.monthlyAvailability >= 90 ? "Disponível" : "Abaixo da Meta"}
+                      </span>
+                    </div>
+
+                    <div className="h-[200px] w-full flex items-center justify-center relative mt-4">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={[
+                              { name: 'Disponível', value: kpis.monthlyAvailability },
+                              { name: 'Indisponível', value: Math.max(0, 100 - kpis.monthlyAvailability) }
+                            ]}
+                            cx="50%"
+                            cy="42%"
+                            innerRadius={20}
+                            outerRadius={45}
+                            paddingAngle={2}
+                            dataKey="value"
+                            label={({ value }) => `${Number(value).toFixed(1)}%`}
+                          >
+                            <Cell key="cell-0" fill="#10b981" />
+                            <Cell key="cell-1" fill="#ef4444" />
+                          </Pie>
+                          <Tooltip 
+                            formatter={(value: any) => `${Number(value).toFixed(1)}%`}
+                            contentStyle={{ background: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff' }}
+                            itemStyle={{ color: '#fff' }}
+                          />
+                          <Legend 
+                            verticalAlign="bottom" 
+                            height={36} 
+                            iconType="circle"
+                            iconSize={8}
+                            formatter={(value) => <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">{value}</span>}
+                          />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between items-center text-[10px] text-slate-400 font-semibold border-t border-slate-50 pt-2">
+                    <span>Inst. (Tempo Real):</span>
+                    <span className="text-slate-700 font-bold">{kpis.currentAvailability.toFixed(1)}%</span>
+                  </div>
+                </div>
+
+                {/* Card 2: Total de Paradas e Reparos */}
+                <div id="metric-card-stops" className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
+                  <div className="flex justify-between items-start">
+                    <div className="p-3 bg-indigo-50 rounded-2xl text-indigo-600">
+                      <Wrench className="w-5 h-5" />
+                    </div>
+                    <div className="flex gap-1.5">
+                      <span className="text-[9px] font-black bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full uppercase tracking-wider">
+                        {totalStops} Total no Período
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Histórico de Manutenções</p>
+                    
+                    {/* Categorized Breakdown */}
+                    <div className="mt-3 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0" />
+                          <span className="text-slate-650 font-semibold">Paradas (Crítica/Geral)</span>
+                        </div>
+                        <span className="font-extrabold text-slate-900 bg-red-50 text-red-600 px-2 py-0.5 rounded-md min-w-[28px] text-center">{stopsSeverityStats.paradas}</span>
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0" />
+                          <span className="text-slate-650 font-semibold">Falhas Iminentes</span>
+                        </div>
+                        <span className="font-extrabold text-slate-900 bg-amber-50 text-amber-600 px-2 py-0.5 rounded-md min-w-[28px] text-center">{stopsSeverityStats.falhasIminentes}</span>
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
+                          <span className="text-slate-650 font-semibold">Reparos / Preventivas</span>
+                        </div>
+                        <span className="font-extrabold text-slate-900 bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-md min-w-[28px] text-center">{stopsSeverityStats.reparos}</span>
+                      </div>
+                    </div>
+
+                    {/* Visual Proportion Bar */}
+                    {totalStops > 0 && (
+                      <div className="w-full h-1.5 bg-slate-100 rounded-full flex overflow-hidden mt-3">
+                        <div className="bg-red-500 h-full transition-all" style={{ width: `${(stopsSeverityStats.paradas / totalStops) * 100}%` }} title={`Paradas: ${stopsSeverityStats.paradas}`} />
+                        <div className="bg-amber-500 h-full transition-all" style={{ width: `${(stopsSeverityStats.falhasIminentes / totalStops) * 100}%` }} title={`Falhas Iminentes: ${stopsSeverityStats.falhasIminentes}`} />
+                        <div className="bg-emerald-500 h-full transition-all" style={{ width: `${(stopsSeverityStats.reparos / totalStops) * 100}%` }} title={`Reparos/Preventivas: ${stopsSeverityStats.reparos}`} />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold border-t border-slate-50 pt-2">
+                    <span>Concluídas: <strong className="text-slate-700">{completedRepairs}</strong></span>
+                    <span>Andamento: <strong className="text-slate-700">{inProgressRepairs + activeStops.length}</strong></span>
+                  </div>
+                </div>
+
+                {/* Card 3: Tempo Médio de Resposta */}
+                <div id="metric-card-avg-response" className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
+                  <div className="flex justify-between items-start">
+                    <div className="p-3 bg-amber-50 rounded-2xl text-amber-600">
+                      <Clock className="w-5 h-5" />
                     </div>
                     <span className={cn(
                       "text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider",
-                      kpis.monthlyAvailability >= 90 ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"
+                      avgResponseTime <= 30 * 60000 ? "bg-emerald-50 text-emerald-700" : (avgResponseTime <= 60 * 60000 ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-700")
                     )}>
-                      {kpis.monthlyAvailability >= 90 ? "Disponível" : "Abaixo da Meta"}
+                      {avgResponseTime > 0 
+                        ? (avgResponseTime <= 30 * 60000 ? "Excelente" : (avgResponseTime <= 60 * 60000 ? "Apropriado" : "Acima da Meta"))
+                        : "Sem Registros"
+                      }
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Tempo Médio de Resposta (TMR)</p>
+                    <p className="text-3xl font-black text-slate-900 tracking-tight mt-1">
+                      {avgResponseTime > 0 ? formatDuration(avgResponseTime) : "---"}
+                    </p>
+                  </div>
+                  
+                  {/* Visual Target Bar for TMR */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex justify-between text-[10px] font-bold text-slate-400 uppercase">
+                      <span>Meta: &lt; 30 min</span>
+                      <span>TMR Atual</span>
+                    </div>
+                    <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden relative">
+                      {avgResponseTime > 0 ? (
+                        <div 
+                          className={cn(
+                            "h-full rounded-full transition-all duration-500",
+                            avgResponseTime <= 30 * 60000 ? "bg-emerald-500" : (avgResponseTime <= 60 * 60000 ? "bg-amber-500" : "bg-red-500")
+                          )}
+                          style={{ width: `${Math.min(100, (avgResponseTime / (60 * 60 * 1000)) * 100)}%` }}
+                        />
+                      ) : (
+                        <div className="w-0 h-full bg-slate-200" />
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold border-t border-slate-50 pt-2 shrink-0">
+                    <span>Atendimento:</span>
+                    <span className="text-slate-600 font-extrabold">Chamada ⇒ Início Reparo</span>
+                  </div>
+                </div>
+
+                {/* Card 4: MTTR e MTBF */}
+                <div id="metric-card-kpis-technical" className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
+                  <div className="flex justify-between items-start">
+                    <div className="p-3 bg-slate-900 rounded-2xl text-white">
+                      <Timer className="w-5 h-5 animate-pulse" />
+                    </div>
+                    <span className="text-[9px] font-black bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full uppercase tracking-wider">
+                      Indicadores de Confiabilidade
                     </span>
                   </div>
 
-                  <div className="h-[150px] w-full flex items-center justify-center relative mt-4">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={[
-                            { name: 'Disponível', value: kpis.monthlyAvailability },
-                            { name: 'Indisponível', value: Math.max(0, 100 - kpis.monthlyAvailability) }
-                          ]}
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={45}
-                          outerRadius={65}
-                          paddingAngle={3}
-                          dataKey="value"
-                        >
-                          <Cell key="cell-0" fill="#10b981" />
-                          <Cell key="cell-1" fill="#ef4444" />
-                        </Pie>
-                        <Tooltip 
-                          formatter={(value: any) => `${Number(value).toFixed(1)}%`}
-                          contentStyle={{ background: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff' }}
-                          itemStyle={{ color: '#fff' }}
-                        />
-                      </PieChart>
-                    </ResponsiveContainer>
-                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                      <span className="text-lg font-black text-slate-900">{kpis.monthlyAvailability.toFixed(1)}%</span>
-                      <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Acumulado</span>
+                  {/* Styled Columns for MTTR and MTBF */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-slate-50/80 hover:bg-slate-50 border border-slate-100 rounded-2xl p-3 flex flex-col justify-between transition-colors font-sans w-full">
+                      <div>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">MTTR</p>
+                        <p className="text-lg font-black text-slate-900 truncate mt-1">
+                          {kpis.mttr > 0 ? formatDuration(kpis.mttr) : "---"}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 mt-2 text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-md w-fit uppercase">
+                        <span>↓ Rápido</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50/80 hover:bg-slate-50 border border-slate-100 rounded-2xl p-3 flex flex-col justify-between transition-colors font-sans w-full font-sans">
+                      <div>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">MTBF</p>
+                        <p className="text-lg font-black text-slate-900 truncate mt-1">
+                          {kpis.mtbf > 0 ? `${kpis.mtbf.toFixed(0)}h` : "---"}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 mt-2 text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-md w-fit uppercase">
+                        <span>↑ Confiável</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold border-t border-slate-50 pt-2 shrink-0">
+                    <span className="truncate">MTTR: Tempo Médio de Reparo</span>
+                    <span className="text-slate-500 font-extrabold truncate">MTBF: Entre Falhas</span>
+                  </div>
+                </div>
+
+                {/* Card 6: Manutenção Preventiva */}
+                <div id="metric-card-preventive-status" className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
+                  <div className="flex justify-between items-start">
+                    <div className="p-3 bg-blue-50 rounded-2xl text-blue-600">
+                      <Settings2 className="w-5 h-5" />
+                    </div>
+                    <span className={cn(
+                      "text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider",
+                      preventiveMaintenanceStats.vencidas > 0 ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"
+                    )}>
+                      {filterMonth === 'all' 
+                        ? (preventiveMaintenanceStats.vencidas > 0 ? `${preventiveMaintenanceStats.vencidas} Vencidas` : "Preventivas em Dia")
+                        : (preventiveMaintenanceStats.vencidas > 0 ? `${preventiveMaintenanceStats.vencidas} Pendentes` : "Preventivas em Dia")
+                      }
+                    </span>
+                  </div>
+                  
+                  <div>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                      {filterMonth === 'all' ? "Planilha de Preventivas (Frota)" : "Preventivas do Período"}
+                    </p>
+                    
+                    {/* Categorized Breakdown */}
+                    <div className="mt-3 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
+                          <span className="text-slate-650 font-semibold animate-pulse">
+                            {filterMonth === 'all' ? "Em Dia" : "Realizadas (OK)"}
+                          </span>
+                        </div>
+                        <span className="font-extrabold text-slate-900 bg-emerald-55/15 text-emerald-800 px-2 py-0.5 rounded-md min-w-[28px] text-center">
+                          {preventiveMaintenanceStats.ok}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0" />
+                          <span className="text-slate-650 font-semibold animate-pulse">
+                            {filterMonth === 'all' ? "À Vencer" : "Em Execução"}
+                          </span>
+                        </div>
+                        <span className="font-extrabold text-slate-950 bg-amber-50 text-amber-700 px-2 py-0.5 rounded-md min-w-[28px] text-center">
+                          {preventiveMaintenanceStats.aVencer}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0" />
+                          <span className="text-slate-650 font-semibold animate-pulse">
+                            {filterMonth === 'all' ? "Vencidas" : "Atrasadas / Pendentes"}
+                          </span>
+                        </div>
+                        <span className="font-extrabold text-red-700 bg-red-50 px-2 py-0.5 rounded-md min-w-[28px] text-center">
+                          {preventiveMaintenanceStats.vencidas}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Visual Proportion Bar */}
+                    {(() => {
+                      const total = preventiveMaintenanceStats.ok + preventiveMaintenanceStats.aVencer + preventiveMaintenanceStats.vencidas;
+                      if (total > 0) {
+                        const okPct = (preventiveMaintenanceStats.ok / total) * 100;
+                        const aVencerPct = (preventiveMaintenanceStats.aVencer / total) * 100;
+                        const vencidasPct = (preventiveMaintenanceStats.vencidas / total) * 100;
+                        return (
+                          <div className="w-full h-1.5 bg-slate-100 rounded-full flex overflow-hidden mt-3">
+                            <div className="bg-emerald-500 h-full transition-all" style={{ width: `${okPct}%` }} title={`OK/Realizadas: ${preventiveMaintenanceStats.ok}`} />
+                            <div className="bg-amber-500 h-full transition-all" style={{ width: `${aVencerPct}%` }} title={`Planejadas/Execução: ${preventiveMaintenanceStats.aVencer}`} />
+                            <div className="bg-red-500 h-full transition-all" style={{ width: `${vencidasPct}%` }} title={`Vencidas/Pendentes: ${preventiveMaintenanceStats.vencidas}`} />
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </div>
+
+                  <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold border-t border-slate-50 pt-2">
+                    <span>Visualização:</span>
+                    <span className="text-blue-605 uppercase tracking-widest font-black text-[9px]">
+                      {filterMonth === 'all' ? "Snapshot Frota" : "Acumulado Mês"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Card 8: Disponibilidade Física dos Mecânicos */}
+                <div id="metric-card-mechanic-availability" className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
+                  <div>
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
+                          <Wrench className="w-4 h-4" />
+                        </div>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Capacidade da Equipe</p>
+                      </div>
+                      <span className={cn(
+                        "text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider",
+                        mechanicAvailabilityMetrics.availablePercentage >= 90 ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
+                      )}>
+                        {mechanicAvailabilityMetrics.availablePercentage >= 90 ? "Ok" : "Falc. Escala"}
+                      </span>
+                    </div>
+
+                    <div className="h-[200px] w-full flex items-center justify-center relative mt-4">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={[
+                              { name: 'Disponível', value: mechanicAvailabilityMetrics.availablePercentage },
+                              { name: 'Indisponível', value: parseFloat((100 - mechanicAvailabilityMetrics.availablePercentage).toFixed(1)) }
+                            ]}
+                            cx="50%"
+                            cy="42%"
+                            innerRadius={20}
+                            outerRadius={45}
+                            paddingAngle={2}
+                            dataKey="value"
+                            label={({ value }) => `${Number(value).toFixed(1)}%`}
+                          >
+                            <Cell key="cell-0" fill="#3b82f6" />
+                            <Cell key="cell-1" fill="#f59e0b" />
+                          </Pie>
+                          <Tooltip 
+                            formatter={(value: any) => `${Number(value).toFixed(1)}%`}
+                            contentStyle={{ background: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff' }}
+                            itemStyle={{ color: '#fff' }}
+                          />
+                          <Legend 
+                            verticalAlign="bottom" 
+                            height={36} 
+                            iconType="circle"
+                            iconSize={8}
+                            formatter={(value) => <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">{value}</span>}
+                          />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-slate-50 pt-2 space-y-1">
+                    <div className="flex justify-between items-center text-[10px] text-slate-400 font-semibold">
+                      <span>Dias Ausentes:</span>
+                      <span className="text-slate-700 font-bold">{mechanicAvailabilityMetrics.totalAbsentDays} dias ({mechanicAvailabilityMetrics.totalCapacityDays} total-man)</span>
+                    </div>
+                    <div className="flex justify-between items-center text-[10px] text-slate-400 font-semibold">
+                      <span>Impacto Escala:</span>
+                      <span className={cn(
+                        "font-black text-[11px]",
+                        mechanicAvailabilityMetrics.absentDaysWithPendings > 0 ? "text-amber-600" : "text-emerald-600"
+                      )}>
+                        {mechanicAvailabilityMetrics.absentDaysWithPendings} {mechanicAvailabilityMetrics.absentDaysWithPendings === 1 ? 'dia' : 'dias'} c/ máquina parada
+                      </span>
                     </div>
                   </div>
                 </div>
-
-                <div className="flex justify-between items-center text-[10px] text-slate-400 font-semibold border-t border-slate-50 pt-2">
-                  <span>Inst. (Tempo Real):</span>
-                  <span className="text-slate-700 font-bold">{kpis.currentAvailability.toFixed(1)}%</span>
-                </div>
-              </div>
-
-              {/* Card 2: Total de Paradas e Reparos */}
-              <div id="metric-card-stops" className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
-                <div className="flex justify-between items-start">
-                  <div className="p-3 bg-indigo-50 rounded-2xl text-indigo-600">
-                    <Wrench className="w-5 h-5" />
-                  </div>
-                  <div className="flex gap-1.5">
-                    <span className="text-[9px] font-black bg-blue-50 text-blue-700 px-2.5 py-1 rounded-full uppercase tracking-wider">
-                      {activeStops.length} Ativos
-                    </span>
-                  </div>
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Paradas & Reparos</p>
-                  <p className="text-4xl font-extrabold text-slate-900 tracking-tight mt-1">{totalStops}</p>
-                </div>
-                <div className="flex gap-4 text-xs font-semibold text-slate-500">
-                  <div>
-                    <span className="font-extrabold text-slate-900">{completedRepairs}</span> Concluídos
-                  </div>
-                  <div>
-                    <span className="font-extrabold text-slate-900">{inProgressRepairs}</span> Em Andamento
-                  </div>
-                </div>
-              </div>
-
-              {/* Card 3: Tempo Médio de Resposta */}
-              <div id="metric-card-avg-response" className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
-                <div className="flex justify-between items-start">
-                  <div className="p-3 bg-amber-50 rounded-2xl text-amber-600">
-                    <Clock className="w-5 h-5" />
-                  </div>
-                  <span className="text-[9px] font-black bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full uppercase tracking-wider">
-                    Tempo Médio
-                  </span>
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Tempo Médio de Resposta</p>
-                  <p className="text-2xl font-extrabold text-slate-900 tracking-tight mt-1">
-                    {avgResponseTime > 0 ? formatDuration(avgResponseTime) : "---"}
-                  </p>
-                </div>
-                <p className="text-[11px] font-medium text-slate-400">
-                  Intervalo entre chamada e início do reparo
-                </p>
-              </div>
-
-              {/* Card 4: MTTR e MTBF */}
-              <div id="metric-card-kpis-technical" className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
-                <div className="flex justify-between items-start">
-                  <div className="p-3 bg-[#0f172a] rounded-2xl text-white">
-                    <Timer className="w-5 h-5" />
-                  </div>
-                  <span className="text-[9px] font-black bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full uppercase tracking-wider">
-                    Métricas MTTR/MTBF
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">MTTR</p>
-                    <p className="text-base font-extrabold text-slate-900 truncate mt-0.5">{formatDuration(kpis.mttr)}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">MTBF</p>
-                    <p className="text-base font-extrabold text-slate-900 mt-0.5">{kpis.mtbf.toFixed(0)}h</p>
-                  </div>
-                </div>
-                <p className="text-[11px] font-medium text-slate-400">
-                  MTTR: Tempo de reparo | MTBF: Confiabilidade
-                </p>
               </div>
             </div>
 
-            {/* Row 2: Sinalizadores Operacionais */}
-            <div id="dashboard-secondary-metrics" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              
-              {/* Card 5: Aguardando Peças */}
-              <div id="metric-card-parts-waiting" className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
-                <div className="flex justify-between items-start">
-                  <div className="p-3 bg-amber-50 rounded-2xl text-amber-600">
-                    <Package className="w-5 h-5" />
-                  </div>
-                  <span className={cn(
-                    "text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider",
-                    awaitingPartsStops.length > 0 ? "bg-amber-100 text-amber-850 font-bold" : "bg-emerald-50 text-emerald-700"
-                  )}>
-                    {awaitingPartsStops.length > 0 ? `${awaitingPartsStops.length} Paradas` : "Tudo OK"}
-                  </span>
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Aguardando Peças</p>
-                  <p className="text-4xl font-extrabold text-slate-900 tracking-tight mt-1">{awaitingPartsStops.length}</p>
-                </div>
-                <div id="awaiting-parts-list" className="space-y-1.5 max-h-[70px] overflow-y-auto pr-1">
-                  {awaitingPartsStops.length === 0 ? (
-                    <p className="text-[11px] text-slate-400 font-medium">Nenhuma empilhadeira parada por peças hoje.</p>
-                  ) : (
-                    awaitingPartsStops.map(s => {
-                      const fork = uniqueForklifts.find(f => f.id === s.forkliftId);
-                      const displayParts = s.pendingPartsList && s.pendingPartsList.length > 0
-                        ? s.pendingPartsList.join(', ')
-                        : s.description || 'Peças não especificadas';
-                      return (
-                        <div key={s.id} className="text-xs border-l-2 border-amber-400 pl-2">
-                          <span className="font-extrabold text-slate-900">{fork ? `${fork.model} (${fork.serialNumber})` : s.forkliftId}:</span>{' '}
-                          <span className="text-slate-500 font-semibold truncate inline-block max-w-[180px] align-bottom" title={displayParts}>
-                            {displayParts}
-                          </span>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
+            {/* Seção 2: Sinalizadores de Hoje & Tempo Real */}
+            <div id="section-realtime-indicators" className="space-y-4">
+              <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+                <span className="w-1.5 h-4 bg-indigo-500 rounded-full" />
+                <h3 className="text-xs font-black uppercase text-slate-400 tracking-wider">
+                  Status de Hoje & Tempo Real (Não Afetados por Filtros)
+                </h3>
               </div>
 
-              {/* Card 6: Manutenção Preventiva */}
-              <div id="metric-card-preventive-status" className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
-                <div className="flex justify-between items-start">
-                  <div className="p-3 bg-blue-50 rounded-2xl text-blue-600">
-                    <Settings2 className="w-5 h-5" />
-                  </div>
-                  <span className={cn(
-                    "text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider",
-                    preventiveMaintenanceStats.vencidas > 0 ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"
-                  )}>
-                    {preventiveMaintenanceStats.vencidas > 0 ? `${preventiveMaintenanceStats.vencidas} Vencidas` : "Preventivas em Dia"}
-                  </span>
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Planilha de Preventivas</p>
-                  <p className="text-4xl font-extrabold text-slate-900 tracking-tight mt-1">
-                    {preventiveMaintenanceStats.vencidas} <span className="text-lg font-bold text-slate-400">Vencidas</span>
-                  </p>
-                </div>
-                <div id="preventive-badge-summary" className="flex flex-wrap gap-2 text-[10px] font-bold">
-                  <span className="bg-red-50 text-red-750 px-2 py-0.5 rounded-lg">
-                    {preventiveMaintenanceStats.vencidas} Vencidas
-                  </span>
-                  <span className="bg-amber-50 text-amber-700 px-2 py-0.5 rounded-lg">
-                    {preventiveMaintenanceStats.aVencer} À Vencer
-                  </span>
-                  <span className="bg-emerald-55/15 text-emerald-800 px-2 py-0.5 rounded-lg">
-                    {preventiveMaintenanceStats.ok} OK / Em Dia
-                  </span>
-                </div>
-              </div>
-
-              {/* Card 7: Checklist & Compliance */}
-              <div id="metric-card-checklist-status" className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
-                <div className="flex justify-between items-start">
-                  <div className="p-3 bg-emerald-50 rounded-2xl text-emerald-600">
-                    <ClipboardCheck className="w-5 h-5" />
-                  </div>
-                  <button
-                    id="btn-alert-reminders"
-                    onClick={handleSendReminders}
-                    className="text-[9px] font-extrabold bg-blue-600 hover:bg-blue-700 active:scale-95 text-white px-2.5 py-1 rounded-full uppercase tracking-wider transition-all cursor-pointer"
-                  >
-                    Lembrar SMS/WA
-                  </button>
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Check-lists de Hoje</p>
-                  <p className="text-4xl font-extrabold text-slate-900 tracking-tight mt-1">
-                    {checklistComplianceToday.completedToday} <span className="text-lg font-bold text-slate-400">/ {checklistComplianceToday.totalOperating}</span>
-                  </p>
-                </div>
-                <div className="flex justify-between items-center text-[10px] text-slate-400 font-semibold border-t border-slate-50 pt-2">
-                  <span>Conformidade Hoje:</span>
-                  <span className="text-emerald-600 font-black text-xs">{checklistComplianceToday.compliancePercentage}%</span>
-                </div>
-              </div>
-
-              {/* Card 8: Disponibilidade Física dos Mecânicos */}
-              <div id="metric-card-mechanic-availability" className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
-                <div>
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
-                        <Wrench className="w-4 h-4" />
-                      </div>
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Capacidade da Equipe</p>
+              <div id="dashboard-realtime-metrics-grid" className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Card 5: Status das Paradas Ativas */}
+                <div id="metric-card-parts-waiting" className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
+                  <div className="flex justify-between items-start">
+                    <div className="p-3 bg-indigo-50 rounded-2xl text-indigo-600">
+                      <Layers className="w-5 h-5" />
                     </div>
                     <span className={cn(
                       "text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider",
-                      mechanicAvailabilityMetrics.availablePercentage >= 90 ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
+                      activeStopsStats.stops.length > 0 ? "bg-red-50 text-red-700 font-bold border border-red-200" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
                     )}>
-                      {mechanicAvailabilityMetrics.availablePercentage >= 90 ? "Ok" : "Falc. Escala"}
+                      {activeStopsStats.stops.length > 0 ? `${activeStopsStats.stops.length} Ativas` : "Sem Paradas Ativas"}
                     </span>
                   </div>
-
-                  <div className="h-[150px] w-full flex items-center justify-center relative mt-4">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={[
-                            { name: 'Disponível', value: mechanicAvailabilityMetrics.availablePercentage },
-                            { name: 'Indisponível', value: parseFloat((100 - mechanicAvailabilityMetrics.availablePercentage).toFixed(1)) }
-                          ]}
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={45}
-                          outerRadius={65}
-                          paddingAngle={3}
-                          dataKey="value"
-                        >
-                          <Cell key="cell-0" fill="#3b82f6" />
-                          <Cell key="cell-1" fill="#f59e0b" />
-                        </Pie>
-                        <Tooltip 
-                          formatter={(value: any) => `${Number(value).toFixed(1)}%`}
-                          contentStyle={{ background: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff' }}
-                          itemStyle={{ color: '#fff' }}
-                        />
-                      </PieChart>
-                    </ResponsiveContainer>
-                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                      <span className="text-lg font-black text-slate-900">{mechanicAvailabilityMetrics.availablePercentage.toFixed(1)}%</span>
-                      <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider font-extrabold">Presença</span>
+                  
+                  <div>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Status das Paradas Ativas</p>
+                    
+                    {/* Status counts layout */}
+                    <div className="grid grid-cols-3 gap-2 mt-2">
+                      <div className="bg-amber-50 rounded-xl p-2 text-center pb-2">
+                        <p className="text-[9px] font-black text-amber-800 uppercase">Peças</p>
+                        <p className="text-base font-extrabold text-amber-950 mt-0.5">{activeStopsStats.awaitingParts.length}</p>
+                      </div>
+                      <div className="bg-blue-50 rounded-xl p-2 text-center pb-2">
+                        <p className="text-[9px] font-black text-blue-800 uppercase">Iniciadas</p>
+                        <p className="text-base font-extrabold text-blue-950 mt-0.5">{activeStopsStats.inProgress.length}</p>
+                      </div>
+                      <div className="bg-rose-50 rounded-xl p-2 text-center pb-2">
+                        <p className="text-[9px] font-black text-rose-800 uppercase">Espera</p>
+                        <p className="text-base font-extrabold text-rose-950 mt-0.5">{activeStopsStats.onStandby.length}</p>
+                      </div>
                     </div>
+                  </div>
+
+                  <div id="active-paradas-status-list" className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1 border border-slate-100 p-2 rounded-xl bg-slate-50/30">
+                    {activeStopsStats.stops.length === 0 ? (
+                      <p className="text-[11px] text-slate-400 font-medium pt-2 text-center">Nenhuma empilhadeira parada ativamente.</p>
+                    ) : (
+                      activeStopsStats.stops.map(s => {
+                        const fork = uniqueForklifts.find(f => f.id === s.forkliftId) || forklifts.find(f => f.id === s.forkliftId);
+                        
+                        let badgeColor = "bg-rose-105 bg-rose-50 text-rose-700 border-rose-200";
+                        let statusLabel = "Espera";
+                        if (s.status === 'awaiting_parts') {
+                          badgeColor = "bg-amber-100/10 bg-amber-50 text-amber-700 border-amber-200";
+                          statusLabel = "Sem Peça";
+                        } else if (s.status === 'in_progress') {
+                          badgeColor = "bg-blue-100 text-blue-700 border-blue-200";
+                          statusLabel = "Iniciada";
+                        }
+
+                        return (
+                          <div key={s.id} className="text-[11px] flex items-center justify-between gap-2 border-b border-slate-100 pb-1.5 last:border-0 hover:bg-slate-50/85 p-1 rounded-lg transition-colors">
+                            <span className="font-extrabold text-slate-900 flex-1 pr-1 leading-snug break-words" title={fork ? `Frota: ${fork.serialNumber || 'Sem número'} | ${fork.model} (${fork.id})` : s.forkliftId}>
+                              {fork ? (
+                                <span className="inline-flex items-center gap-1.5 flex-wrap">
+                                  <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-black tracking-tight border border-blue-105" title={`ID: ${fork.id}`}>
+                                    Nº {fork.serialNumber || fork.id}
+                                  </span>
+                                  <span className="text-slate-700 font-bold">{fork.model}</span>
+                                </span>
+                              ) : (
+                                <span className="bg-red-50 text-red-600 px-1.5 py-0.5 rounded text-[10px] font-black">Nº {s.forkliftId}</span>
+                              )}
+                            </span>
+                            <span className={cn("text-[8px] font-black px-1.5 py-0.5 rounded border uppercase tracking-wider shrink-0", badgeColor)}>
+                              {statusLabel}
+                            </span>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  <div className="flex justify-between items-center text-[10px] text-slate-400 font-semibold border-t border-slate-100 pt-2 shrink-0">
+                    <span className="truncate">Frotas Afetadas:</span>
+                    <span className="text-slate-700 font-extrabold truncate max-w-[150px] inline-block" title={activeStopsStats.affectedFleets.join(', ')}>
+                      {activeStopsStats.affectedFleets.length > 0 ? activeStopsStats.affectedFleets.join(', ') : 'Nenhuma'}
+                    </span>
                   </div>
                 </div>
 
-                <div className="border-t border-slate-50 pt-2 space-y-1">
-                  <div className="flex justify-between items-center text-[10px] text-slate-400 font-semibold">
-                    <span>Dias Ausentes:</span>
-                    <span className="text-slate-700 font-bold">{mechanicAvailabilityMetrics.totalAbsentDays} dias ({mechanicAvailabilityMetrics.totalCapacityDays} total-man)</span>
+                {/* Card 7: Checklist & Compliance */}
+                <div id="metric-card-checklist-status" className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
+                  <div className="flex justify-between items-center">
+                    <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">
+                      <ClipboardCheck className="w-5 h-5" />
+                    </div>
+                    <button
+                      id="btn-alert-reminders"
+                      onClick={handleSendReminders}
+                      className="text-[9px] font-extrabold bg-blue-600 hover:bg-blue-700 active:scale-95 text-white px-3 py-1.5 rounded-full uppercase tracking-wider transition-all cursor-pointer"
+                    >
+                      Lembrar SMS/WA
+                    </button>
                   </div>
-                  <div className="flex justify-between items-center text-[10px] text-slate-400 font-semibold">
-                    <span>Impacto Escala:</span>
-                    <span className={cn(
-                      "font-black text-[11px]",
-                      mechanicAvailabilityMetrics.absentDaysWithPendings > 0 ? "text-amber-600" : "text-emerald-600"
-                    )}>
-                      {mechanicAvailabilityMetrics.absentDaysWithPendings} {mechanicAvailabilityMetrics.absentDaysWithPendings === 1 ? 'dia' : 'dias'} c/ máquina parada
-                    </span>
+                  
+                  <div className="space-y-4">
+                    <div>
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                        Check-lists de Hoje
+                      </p>
+                      <div className="mt-2 flex items-baseline gap-1.5">
+                        <span className="text-4xl font-extrabold text-slate-900 tracking-tight">
+                          {checklistComplianceToday.completedToday}
+                        </span>
+                        <span className="text-sm font-bold text-slate-400">
+                          realizados hoje
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between text-[10px] font-bold text-slate-400 uppercase">
+                        <span>Progresso de Conformidade</span>
+                        <span>{checklistComplianceToday.completedToday} / {checklistComplianceToday.totalOperating} Máquinas</span>
+                      </div>
+                      <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                          style={{ width: `${checklistComplianceToday.compliancePercentage}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Detailed Indicators */}
+                    <div className="grid grid-cols-2 gap-3 pt-1">
+                      <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col justify-between">
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">FROTA TOTAL</span>
+                        <span className="text-base font-black text-slate-800">
+                          {checklistComplianceToday.totalOperating} máquinas
+                        </span>
+                      </div>
+                      <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col justify-between">
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">PENDENTES HOJE</span>
+                        <span className={cn(
+                          "text-base font-black",
+                          (checklistComplianceToday.totalOperating - checklistComplianceToday.completedToday) > 0 ? "text-amber-600" : "text-emerald-600"
+                        )}>
+                          {Math.max(0, checklistComplianceToday.totalOperating - checklistComplianceToday.completedToday)} pendentes
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Lista de Máquinas Pendentes */}
+                    {checklistComplianceToday.pendingForklifts.length > 0 ? (
+                      <div className="space-y-1.5 pt-1 border-t border-slate-100/60">
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">
+                          Máquinas Faltando:
+                        </span>
+                        <div className="flex flex-wrap gap-1.5 max-h-[80px] overflow-y-auto pr-1">
+                          {checklistComplianceToday.pendingForklifts.map(f => {
+                            const val = (f.serialNumber || f.id).trim();
+                            const display = val.length > 2 ? val.slice(-2) : val;
+                            return (
+                              <span 
+                                key={f.id} 
+                                className="inline-flex items-center bg-amber-50 text-amber-700 hover:bg-amber-100 text-[10px] font-black px-2 py-0.5 rounded-lg border border-amber-200 transition-colors select-none cursor-help"
+                                title={`Frota: ${f.serialNumber || 'Sem número'} | ${f.model} (ID: ${f.id})`}
+                              >
+                                {display}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center py-2 bg-emerald-50 text-emerald-800 rounded-xl border border-emerald-100 text-[9px] font-semibold uppercase tracking-wider">
+                        ✨ Toda frota preencheu hoje!
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex justify-between items-center text-[10px] text-slate-400 font-semibold border-t border-slate-100 pt-2 shrink-0">
+                    <span>Taxa de Conformidade:</span>
+                    <span className="text-emerald-600 font-black text-xs">{checklistComplianceToday.compliancePercentage}%</span>
                   </div>
                 </div>
               </div>
-
             </div>
 
             {/* Main Analysis and Breakdown Sections */}

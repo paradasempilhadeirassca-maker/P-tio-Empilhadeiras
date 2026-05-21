@@ -220,8 +220,12 @@ export function MechanicView() {
   };
 
   const handleFinishMaintenance = async (stop: MaintenanceStop) => {
-    if (!profile || hourMeter === '') {
-      showToast('Por favor, informe o horímetro.', 'error');
+    if (!profile) return;
+    
+    const hasHm = hourMeter !== '';
+    const hmVal = hasHm ? Number(hourMeter) : null;
+    if (hasHm && isNaN(hmVal as number)) {
+      showToast('Por favor, informe um horímetro válido.', 'error');
       return;
     }
     if (!repairNotes.trim()) {
@@ -257,14 +261,18 @@ export function MechanicView() {
         }
       }
 
-      batch.update(Firestore.doc(db, 'maintenance', stop.id), {
+      const maintenanceUpdates: any = {
         status: 'completed',
         endTime: endTime,
-        hourMeter: Number(hourMeter),
         approverName: approverName.trim(),
         repairNotes: repairNotes.trim(),
         parts: parts
-      });
+      };
+      if (hmVal !== null) {
+        maintenanceUpdates.hourMeter = hmVal;
+      }
+
+      batch.update(Firestore.doc(db, 'maintenance', stop.id), maintenanceUpdates);
 
       // DETERMINING NEW STATUS
       // Exclude current stop as it's completing
@@ -284,19 +292,30 @@ export function MechanicView() {
         }
       }
 
-      batch.update(Firestore.doc(db, 'forklifts', stop.forkliftId), {
+      const forkliftUpdates: any = {
         status: targetStatus,
         lastMaintenance: endTime,
-        lastHourMeter: Number(hourMeter),
         lastHourMeterUpdate: endTime
-      });
+      };
+      if (hmVal !== null) {
+        forkliftUpdates.lastHourMeter = hmVal;
+      }
+
+      batch.update(Firestore.doc(db, 'forklifts', stop.forkliftId), forkliftUpdates);
 
       await batch.commit();
 
       // Update local state
       const updatedStops = activeStops.filter(s => s.id !== stop.id);
       const updatedForklifts = forklifts.map(f =>
-        f.id === stop.forkliftId ? { ...f, status: targetStatus, lastMaintenance: endTime, lastHourMeter: Number(hourMeter) } : f
+        f.id === stop.forkliftId 
+          ? { 
+              ...f, 
+              status: targetStatus, 
+              lastMaintenance: endTime, 
+              ...(hmVal !== null ? { lastHourMeter: hmVal } : {}) 
+            } 
+          : f
       );
 
       setActiveStops(updatedStops);
@@ -999,7 +1018,7 @@ function MaintenanceForm({
                 <div className="bg-white p-10 rounded-[3.5rem] border border-slate-100 shadow-sm space-y-10">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                         <div>
-                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2 block ml-1">Horímetro Final <span className="text-red-500">*</span></label>
+                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2 block ml-1">Horímetro Final (Opcional)</label>
                             <input 
                                 type="number"
                                 value={hourMeter}
