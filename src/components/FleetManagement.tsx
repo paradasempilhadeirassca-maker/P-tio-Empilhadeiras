@@ -318,15 +318,17 @@ export function FleetManagement({ onReportOccurrence }: { onReportOccurrence?: (
           <AnimatePresence mode="popLayout">
             {filteredForklifts.map((f, idx) => {
               const prevMaintStatus = getMaintenanceStatus(f.lastHourMeter || 0, f.nextPreventiveHorometer || 0, f.lastHourMeterUpdate);
-              const nextHours = f.nextPreventiveHorometer || 0;
-              const lastHours = f.lastHourMeter || 0;
-              const remaining = Math.max(0, nextHours - lastHours);
+              const nextHours = Number((f.nextPreventiveHorometer || 0).toFixed(1));
+              const lastHours = Number((f.lastHourMeter || 0).toFixed(1));
+              const remainingVal = Math.max(0, nextHours - lastHours);
+              const remaining = Number(remainingVal.toFixed(1));
               const progress = Math.min(100, Math.max(0, ((500 - remaining) / 500) * 100));
               
               const isMaintenanceRequired = prevMaintStatus === 'vencida' || prevMaintStatus === 'proxima';
 
               // Local Health Indicator
-              const localHealth = Math.min(100, (f.status === 'available' ? 80 : 20) + (remaining > 50 ? 20 : 0));
+              const localHealthVal = Math.min(100, (f.status === 'available' ? 80 : 20) + (remaining > 50 ? 20 : 0));
+              const localHealth = Math.round(localHealthVal);
               
               return (
                 <motion.div 
@@ -422,7 +424,7 @@ export function FleetManagement({ onReportOccurrence }: { onReportOccurrence?: (
                       </div>
                     </div>
                     <div className="flex justify-between items-center text-[9px] font-bold text-slate-400">
-                       <span className="bg-white px-2 py-0.5 rounded-full border border-slate-100">{nextHours - 500}h Base</span>
+                       <span className="bg-white px-2 py-0.5 rounded-full border border-slate-100">{Number((nextHours - 500).toFixed(1))}h Base</span>
                        <span className={cn(
                          "px-2.5 py-1 rounded-full border shadow-sm font-black text-[8px]",
                          prevMaintStatus === 'vencida' ? "bg-red-500 text-white border-red-600" :

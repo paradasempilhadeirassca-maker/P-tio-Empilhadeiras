@@ -115,7 +115,17 @@ export function ActiveMachinesView({ onNavigate }: { onNavigate?: (view: string)
     const awaitingParts = activeStops.filter(s => s.status === 'awaiting_parts').length;
     
     const now = Date.now();
-    const durations = activeStops.map(s => now - new Date(s.stopTime).getTime());
+    const durations = activeStops.map(s => {
+      const sev = s.severity || (s.type === 'preventive' ? 'low' : 'high');
+      const isParada = sev === 'high' || sev === 'critical';
+      let startMs: number | null = null;
+      if (isParada) {
+        startMs = new Date(s.stopTime).getTime();
+      } else if (s.startTime) {
+        startMs = new Date(s.startTime).getTime();
+      }
+      return startMs ? Math.max(0, now - startMs) : 0;
+    });
     const maxDowntime = durations.length > 0 ? Math.max(...durations) : 0;
     
     // Average response time for accepted ones
@@ -143,8 +153,10 @@ export function ActiveMachinesView({ onNavigate }: { onNavigate?: (view: string)
     const key = (directForklift?.serialNumber || '').trim().toLowerCase() || stop.forkliftId;
     const forklift = consolidatedForklifts.get(key) || directForklift;
     
-    const isCritical = stop.severity === 'high';
-    const isMedium = stop.severity === 'medium';
+    const sev = stop.severity || (stop.type === 'preventive' ? 'low' : 'high');
+    const isParada = sev === 'high' || sev === 'critical';
+    const isCritical = isParada;
+    const isMedium = sev === 'medium';
     const isAwaitingParts = stop.status === 'awaiting_parts';
     const isPending = stop.status === 'pending';
     
@@ -152,7 +164,14 @@ export function ActiveMachinesView({ onNavigate }: { onNavigate?: (view: string)
     const now = Date.now();
     const stopTime = new Date(stop.stopTime).getTime();
     let responseTime = stop.startTime ? (new Date(stop.startTime).getTime() - stopTime) : (now - stopTime);
-    const downtime = now - stopTime;
+    
+    let startMs: number | null = null;
+    if (isParada) {
+      startMs = stopTime;
+    } else if (stop.startTime) {
+      startMs = new Date(stop.startTime).getTime();
+    }
+    const downtime = startMs ? Math.max(0, now - startMs) : 0;
     const minutesDowntime = downtime / 60000;
 
     let partsWaitingTotal = (stop.totalWaitingPartsMinutes || 0) * 60000;

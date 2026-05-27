@@ -116,7 +116,20 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    return Array.from(fleetMap.values()).sort((a, b) => (a.serialNumber || '').localeCompare(b.serialNumber || ''));
+    const result = Array.from(fleetMap.values()).sort((a, b) => (a.serialNumber || '').localeCompare(b.serialNumber || ''));
+    
+    // Filter out dummy, test, and empty forklift records to guarantee calculations use only the 8 real active registered machines
+    return result.filter(f => {
+      const serial = (f.serialNumber || '').trim().toLowerCase();
+      const model = (f.model || '').trim().toLowerCase();
+      
+      if (!serial || serial === '' || serial === 'n/a' || serial === 'teste' || serial === 'test' || serial === '123' || serial === '123456') return false;
+      if (!model || model === '' || model === 'n/a' || model === 'teste' || model.includes('teste') || model.includes('demo') || model.includes('test')) return false;
+      
+      // Limit to standard fleet serial patterns (serial starting with '91005' or '93006') as indicated by user requirements
+      const isRealFleet = serial.startsWith('91005') || serial.startsWith('93006');
+      return isRealFleet;
+    });
   }, [forklifts, activeStops]);
 
   const fetchGlobalData = useCallback(async (force = false) => {

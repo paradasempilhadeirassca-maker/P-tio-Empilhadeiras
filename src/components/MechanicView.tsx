@@ -515,7 +515,9 @@ export function MechanicView() {
   const getDowntime = (stop: MaintenanceStop) => {
     // Q (Quebra/high): starts at stopTime (registration)
     // R (Reparo/low), I (Iminente/medium): starts at startTime (atendimento)
-    const startIso = stop.severity === 'high' ? stop.stopTime : stop.startTime;
+    const sev = stop.severity || (stop.type === 'preventive' ? 'low' : 'high');
+    const isParada = sev === 'high' || sev === 'critical';
+    const startIso = isParada ? stop.stopTime : stop.startTime;
     if (!startIso) return 0;
     return diffInMinutes(startIso, stop.endTime ? stop.endTime : now);
   };

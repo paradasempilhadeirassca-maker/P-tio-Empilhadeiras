@@ -8,14 +8,16 @@ import {
   limit,
   startAfter,
   QueryDocumentSnapshot,
-  DocumentData
+  DocumentData,
+  doc,
+  getDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { MaintenanceStop, Forklift } from '../types';
 import { useAuth } from './Auth';
 import { useData } from './DataContext';
 import { History, Search, Filter, Loader2, ChevronDown, ChevronUp, X, Layers, List } from 'lucide-react';
-import { cn, formatDuration, formatDateTime, formatDate, formatTime } from '../lib/utils';
+import { cn, formatDuration, formatDateTime, formatDate, formatTime, parseDateSafe } from '../lib/utils';
 
 interface MaintenanceHistoryProps {
   role: 'operator' | 'mechanic' | 'manager';
@@ -119,6 +121,30 @@ export function MaintenanceHistory({ role }: MaintenanceHistoryProps) {
     fetchData();
   }, [profile?.uid]);
 
+  // Direct Document ID Lookup fallback
+  useEffect(() => {
+    const term = searchTerm.trim();
+    if (term.length === 20 && /^[a-zA-Z0-9_\-]+$/.test(term)) {
+      const alreadyHasIt = history.some(h => h.id === term);
+      if (!alreadyHasIt) {
+        setLoading(true);
+        getDoc(doc(db, 'maintenance', term)).then((docSnap) => {
+          if (docSnap.exists()) {
+            const fetchedStop = { id: docSnap.id, ...docSnap.data() } as MaintenanceStop;
+            setHistory(prev => {
+              if (prev.some(x => x.id === fetchedStop.id)) return prev;
+              return [fetchedStop, ...prev];
+            });
+          }
+        }).catch(err => {
+          console.error("Error fetching single doc by ID:", err);
+        }).finally(() => {
+          setLoading(false);
+        });
+      }
+    }
+  }, [searchTerm, history]);
+
   // Extract unique operator list from history to combine with useData().operators
   const availableOperators = useMemo(() => {
     const operatorMap = new Map<string, string>();
@@ -178,6 +204,11 @@ export function MaintenanceHistory({ role }: MaintenanceHistoryProps) {
 
   const filteredHistory = useMemo(() => {
     return history.filter(h => {
+      // If the search term is the exact document ID, always show it and bypass other filters
+      if (searchTerm.trim() === h.id) {
+        return true;
+      }
+
       const f = forklifts.find(fork => fork.id === h.forkliftId);
       
       // 1. Text Search
@@ -216,13 +247,13 @@ export function MaintenanceHistory({ role }: MaintenanceHistoryProps) {
       }
 
       // 4. Date Filters
+      const dateObj = parseDateSafe(h.stopTime);
+      const recordDateStr = isNaN(dateObj.getTime()) ? '' : dateObj.toISOString().slice(0, 10); // YYYY-MM-DD
       if (filterStartDate) {
-        const recordDateStr = h.stopTime.slice(0, 10); // YYYY-MM-DD
-        if (recordDateStr < filterStartDate) return false;
+        if (!recordDateStr || recordDateStr < filterStartDate) return false;
       }
       if (filterEndDate) {
-        const recordDateStr = h.stopTime.slice(0, 10); // YYYY-MM-DD
-        if (recordDateStr > filterEndDate) return false;
+        if (!recordDateStr || recordDateStr > filterEndDate) return false;
       }
 
       return true;
@@ -509,8 +540,11 @@ export function MaintenanceHistory({ role }: MaintenanceHistoryProps) {
                           </thead>
                           <tbody className="divide-y divide-slate-100 bg-white">
                             {group.records.map(h => {
-                              const totalStopDuration = h.endTime ? new Date(h.endTime).getTime() - new Date(h.stopTime).getTime() : Date.now() - new Date(h.stopTime).getTime();
-                              const maintenanceDuration = h.endTime && h.startTime ? new Date(h.endTime).getTime() - new Date(h.startTime).getTime() : (h.startTime ? Date.now() - new Date(h.startTime).getTime() : 0);
+                              const sev = h.severity || (h.type === 'preventive' ? 'low' : 'high');
+                              const isParada = sev === 'high' || sev === 'critical';
+                              const startMs = isParada ? parseDateSafe(h.stopTime).getTime() : (h.startTime ? parseDateSafe(h.startTime).getTime() : null);
+                              const totalStopDuration = startMs ? (h.endTime ? parseDateSafe(h.endTime).getTime() - startMs : Date.now() - startMs) : 0;
+                              const maintenanceDuration = h.endTime && h.startTime ? parseDateSafe(h.endTime).getTime() - parseDateSafe(h.startTime).getTime() : (h.startTime ? Date.now() - parseDateSafe(h.startTime).getTime() : 0);
                               
                               return (
                                 <tr key={h.id} className="hover:bg-slate-50/50 transition-colors text-xs">
@@ -576,8 +610,11 @@ export function MaintenanceHistory({ role }: MaintenanceHistoryProps) {
                       {/* Mobile sub-cards */}
                       <div className="md:hidden p-4 space-y-3 bg-slate-50/40">
                         {group.records.map(h => {
-                          const totalStopDuration = h.endTime ? new Date(h.endTime).getTime() - new Date(h.stopTime).getTime() : Date.now() - new Date(h.stopTime).getTime();
-                          const maintenanceDuration = h.endTime && h.startTime ? new Date(h.endTime).getTime() - new Date(h.startTime).getTime() : (h.startTime ? Date.now() - new Date(h.startTime).getTime() : 0);
+                          const sev = h.severity || (h.type === 'preventive' ? 'low' : 'high');
+                          const isParada = sev === 'high' || sev === 'critical';
+                          const startMs = isParada ? parseDateSafe(h.stopTime).getTime() : (h.startTime ? parseDateSafe(h.startTime).getTime() : null);
+                          const totalStopDuration = startMs ? (h.endTime ? parseDateSafe(h.endTime).getTime() - startMs : Date.now() - startMs) : 0;
+                          const maintenanceDuration = h.endTime && h.startTime ? parseDateSafe(h.endTime).getTime() - parseDateSafe(h.startTime).getTime() : (h.startTime ? Date.now() - parseDateSafe(h.startTime).getTime() : 0);
                           
                           return (
                             <div key={h.id} className="bg-white p-4 rounded-xl border border-slate-150 space-y-3 shadow-sm text-left">
@@ -676,8 +713,11 @@ export function MaintenanceHistory({ role }: MaintenanceHistoryProps) {
                 ) : (
                   filteredHistory.map(h => {
                     const f = forklifts.find(fork => fork.id === h.forkliftId);
-                    const totalStopDuration = h.endTime ? new Date(h.endTime).getTime() - new Date(h.stopTime).getTime() : Date.now() - new Date(h.stopTime).getTime();
-                    const maintenanceDuration = h.endTime && h.startTime ? new Date(h.endTime).getTime() - new Date(h.startTime).getTime() : (h.startTime ? Date.now() - new Date(h.startTime).getTime() : 0);
+                    const sev = h.severity || (h.type === 'preventive' ? 'low' : 'high');
+                    const isParada = sev === 'high' || sev === 'critical';
+                    const startMs = isParada ? parseDateSafe(h.stopTime).getTime() : (h.startTime ? parseDateSafe(h.startTime).getTime() : null);
+                    const totalStopDuration = startMs ? (h.endTime ? parseDateSafe(h.endTime).getTime() - startMs : Date.now() - startMs) : 0;
+                    const maintenanceDuration = h.endTime && h.startTime ? parseDateSafe(h.endTime).getTime() - parseDateSafe(h.startTime).getTime() : (h.startTime ? Date.now() - parseDateSafe(h.startTime).getTime() : 0);
                     
                     return (
                       <tr key={h.id} className="hover:bg-slate-50 transition-colors">
@@ -756,8 +796,11 @@ export function MaintenanceHistory({ role }: MaintenanceHistoryProps) {
             ) : (
               filteredHistory.map(h => {
                 const f = forklifts.find(fork => fork.id === h.forkliftId);
-                const totalStopDuration = h.endTime ? new Date(h.endTime).getTime() - new Date(h.stopTime).getTime() : Date.now() - new Date(h.stopTime).getTime();
-                const maintenanceDuration = h.endTime && h.startTime ? new Date(h.endTime).getTime() - new Date(h.startTime).getTime() : (h.startTime ? Date.now() - new Date(h.startTime).getTime() : 0);
+                const sev = h.severity || (h.type === 'preventive' ? 'low' : 'high');
+                const isParada = sev === 'high' || sev === 'critical';
+                const startMs = isParada ? parseDateSafe(h.stopTime).getTime() : (h.startTime ? parseDateSafe(h.startTime).getTime() : null);
+                const totalStopDuration = startMs ? (h.endTime ? parseDateSafe(h.endTime).getTime() - startMs : Date.now() - startMs) : 0;
+                const maintenanceDuration = h.endTime && h.startTime ? parseDateSafe(h.endTime).getTime() - parseDateSafe(h.startTime).getTime() : (h.startTime ? Date.now() - parseDateSafe(h.startTime).getTime() : 0);
                 
                 return (
                   <div key={h.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">

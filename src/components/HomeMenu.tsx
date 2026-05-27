@@ -415,7 +415,7 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
               </div>
 
               {/* Tabs */}
-              {profile.role === 'manager' && (
+              {(profile.role === 'manager' || profile.role === 'leader') && (
                 <div className="flex bg-slate-50 p-2 gap-2 mx-8 mt-6 rounded-[1.25rem] border border-slate-200/50">
                   <button
                     onClick={() => setActiveTab('profile')}
@@ -435,24 +435,28 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
                   >
                     Mecânicos
                   </button>
-                  <button
-                    onClick={() => setActiveTab('goals')}
-                    className={cn(
-                      "flex-1 py-3 text-xs font-black uppercase tracking-widest rounded-xl transition-all",
-                      activeTab === 'goals' ? "bg-white text-emerald-600 shadow-sm" : "text-slate-400 hover:text-slate-600"
-                    )}
-                  >
-                    Metas
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('system')}
-                    className={cn(
-                      "flex-1 py-3 text-xs font-black uppercase tracking-widest rounded-xl transition-all",
-                      activeTab === 'system' ? "bg-white text-red-600 shadow-sm" : "text-slate-400 hover:text-slate-600"
-                    )}
-                  >
-                    Sistema
-                  </button>
+                  {profile.role === 'manager' && (
+                    <>
+                      <button
+                        onClick={() => setActiveTab('goals')}
+                        className={cn(
+                          "flex-1 py-3 text-xs font-black uppercase tracking-widest rounded-xl transition-all",
+                          activeTab === 'goals' ? "bg-white text-emerald-600 shadow-sm" : "text-slate-400 hover:text-slate-600"
+                        )}
+                      >
+                        Metas
+                      </button>
+                      <button
+                        onClick={() => setActiveTab('system')}
+                        className={cn(
+                          "flex-1 py-3 text-xs font-black uppercase tracking-widest rounded-xl transition-all",
+                          activeTab === 'system' ? "bg-white text-red-600 shadow-sm" : "text-slate-400 hover:text-slate-600"
+                        )}
+                      >
+                        Sistema
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
 

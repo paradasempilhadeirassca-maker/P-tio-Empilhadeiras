@@ -134,13 +134,13 @@ service cloud.firestore {
 
     match /operator_absences/{absenceId} {
       allow read: if isSignedIn();
-      allow create: if isManager() && isValidAbsence(incoming());
-      allow update, delete: if isManager();
+      allow create: if (isManager() || isLeader()) && isValidAbsence(incoming());
+      allow update, delete: if isManager() || isLeader();
     }
 
     match /forklifts/{forkliftId} {
       allow read: if isSignedIn();
-      allow create, delete: if isManager() && isValidId(forkliftId);
+      allow create, delete: if (isManager() || isLeader()) && isValidId(forkliftId);
       allow update: if isSignedIn() && isValidId(forkliftId) && (
         isManager() || 
         (

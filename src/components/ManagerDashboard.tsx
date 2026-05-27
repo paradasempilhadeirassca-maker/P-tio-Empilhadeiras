@@ -58,6 +58,28 @@ const parseDateSafe = (val: any): Date => {
       return new Date(val.seconds * 1000);
     }
   }
+  if (typeof val === 'string') {
+    // 1. Check for standard ISO YYYY-MM-DD format (no time) to avoid UTC day shift
+    const yyyyMmDdOnly = val.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (yyyyMmDdOnly) {
+      const year = parseInt(yyyyMmDdOnly[1], 10);
+      const month = parseInt(yyyyMmDdOnly[2], 10) - 1;
+      const day = parseInt(yyyyMmDdOnly[3], 10);
+      return new Date(year, month, day, 12, 0, 0); // Local noon
+    }
+
+    // 2. Check for DD/MM/YYYY format with optional time (standard Brazilian format)
+    const ddMmYyyyMatch = val.match(/^(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+    if (ddMmYyyyMatch) {
+      const day = parseInt(ddMmYyyyMatch[1], 10);
+      const month = parseInt(ddMmYyyyMatch[2], 10) - 1;
+      const year = parseInt(ddMmYyyyMatch[3], 10);
+      const hours = ddMmYyyyMatch[4] ? parseInt(ddMmYyyyMatch[4], 10) : 12;
+      const minutes = ddMmYyyyMatch[5] ? parseInt(ddMmYyyyMatch[5], 10) : 0;
+      const seconds = ddMmYyyyMatch[6] ? parseInt(ddMmYyyyMatch[6], 10) : 0;
+      return new Date(year, month, day, hours, minutes, seconds);
+    }
+  }
   const d = new Date(val);
   if (!isNaN(d.getTime())) {
     return d;
@@ -325,17 +347,6 @@ export function ManagerDashboard() {
     const criticalMachines: any[] = [];
 
     stopped.forEach(stop => {
-      const stopDate = parseDateSafe(stop.stopTime);
-      const diffDays = Math.floor((now.getTime() - stopDate.getTime()) / (1000 * 60 * 60 * 24));
-      
-      // Aging
-      if (diffDays <= 3) aging.upTo3++;
-      else if (diffDays <= 7) aging.fourTo7++;
-      else if (diffDays <= 15) aging.eightTo15++;
-      else aging.over15++;
-
-      if (diffDays > 30) aging.over30++;
-
       // Backlog & Severity
       const severity = stop.severity || 'high';
       if (severity === 'high') backlog.critical++;
@@ -345,6 +356,32 @@ export function ManagerDashboard() {
       if (stop.status === 'awaiting_parts') backlog.status.awaiting_parts++;
       else if (stop.status === 'in_progress') backlog.status.in_progress++;
       else backlog.status.pending++;
+
+      // Indisponibilidade calculations
+      const sev = stop.severity || (stop.type === 'preventive' ? 'low' : 'high');
+      const isParada = sev === 'high' || sev === 'critical';
+      
+      let startMs: number | null = null;
+      if (isParada) {
+        startMs = parseDateSafe(stop.stopTime).getTime();
+      } else if (stop.startTime) {
+        startMs = parseDateSafe(stop.startTime).getTime();
+      }
+
+      // If not Parada and not started yet, it doesn't represent indisponibilidade, lost hours or aging
+      if (startMs === null) {
+        return;
+      }
+
+      const diffDays = Math.floor((now.getTime() - startMs) / (1000 * 60 * 60 * 24));
+      
+      // Aging
+      if (diffDays <= 3) aging.upTo3++;
+      else if (diffDays <= 7) aging.fourTo7++;
+      else if (diffDays <= 15) aging.eightTo15++;
+      else aging.over15++;
+
+      if (diffDays > 30) aging.over30++;
 
       // Lost Hours (Assuming 12h planned per day as per request example)
       const lostHours = diffDays * 12;
@@ -388,7 +425,11 @@ export function ManagerDashboard() {
       ? targetActiveStops
       : targetActiveStops.filter(s => s.operatorId === filterOperator || (s.operatorIds && s.operatorIds.includes(filterOperator)));
 
-    const stoppedUnits = filteredActiveStops.length;
+    const stoppedUnits = filteredActiveStops.filter(s => {
+      const sev = s.severity || (s.type === 'preventive' ? 'low' : 'high');
+      const isParada = sev === 'high' || sev === 'critical';
+      return isParada || !!s.startTime;
+    }).length;
     
     // Fleet instant availability
     const currentAvailability = ((totalFleetUnits - stoppedUnits) / totalFleetUnits) * 100;
@@ -400,51 +441,93 @@ export function ManagerDashboard() {
     const effectiveEndForPeriod = Math.min(end.getTime(), now.getTime());
     const totalPeriodDays = Math.max(1, (effectiveEndForPeriod - start.getTime()) / (1000 * 60 * 60 * 24));
     
-    // Planned hours based on target forklifts only
-    const totalPlannedHours = totalFleetUnits * 12 * totalPeriodDays;
+    // Calculate total planned hours and downtime hours capped per machine
+    let totalPlannedHours = 0;
+    let totalDowntimeHours = 0;
+    let totalForkliftMtbfHours = 0;
 
-    // Calculate total downtime in the period for ALL relevant stops
-    const allStopsInPeriod = maintenanceHistory.filter(h => {
-      const hStop = parseDateSafe(h.stopTime).getTime();
-      const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
-      
-      const matchesForklift = matchesForkliftFilter(h.forkliftId, filterForklift);
-      const matchesOperator = filterOperator === 'all' || h.operatorId === filterOperator || (h.operatorIds && h.operatorIds.includes(filterOperator));
+    targetUniqueForklifts.forEach(f => {
+      const plannedHoursForMachine = 24 * totalPeriodDays;
+      totalPlannedHours += plannedHoursForMachine;
 
-      return hStop < effectiveEndForPeriod && hEnd > start.getTime() && matchesForklift && matchesOperator;
+      // Find all stops for this specific machine in the period
+      const machineStops = maintenanceHistory.filter(h => {
+        const matchesForklift = matchesForkliftFilter(h.forkliftId, f.id);
+        const matchesOperator = filterOperator === 'all' || h.operatorId === filterOperator || (h.operatorIds && h.operatorIds.includes(filterOperator));
+        if (!matchesForklift || !matchesOperator) return false;
+
+        const sev = h.severity || (h.type === 'preventive' ? 'low' : 'high');
+        const isParada = sev === 'high' || sev === 'critical';
+        
+        let startMs: number;
+        if (isParada) {
+          startMs = parseDateSafe(h.stopTime).getTime();
+        } else {
+          if (!h.startTime) return false;
+          startMs = parseDateSafe(h.startTime).getTime();
+        }
+
+        const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
+
+        return startMs < effectiveEndForPeriod && hEnd > start.getTime();
+      });
+
+      // Sum downtime of these stops
+      let machineDowntimeMs = 0;
+      machineStops.forEach(h => {
+        const sev = h.severity || (h.type === 'preventive' ? 'low' : 'high');
+        const isParada = sev === 'high' || sev === 'critical';
+        const startMs = isParada ? parseDateSafe(h.stopTime).getTime() : parseDateSafe(h.startTime!).getTime();
+        const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
+        
+        const effectiveStart = Math.max(start.getTime(), startMs);
+        const effectiveEnd = Math.min(effectiveEndForPeriod, hEnd);
+        machineDowntimeMs += Math.max(0, effectiveEnd - effectiveStart);
+      });
+
+      const machineDowntimeHours = machineDowntimeMs / (1000 * 60 * 60);
+      const cappedDowntimeHours = Math.min(plannedHoursForMachine, machineDowntimeHours);
+      totalDowntimeHours += cappedDowntimeHours;
+
+      // Calculate MTBF for this individual forklift (in hours)
+      const forkliftOperatingHours = Math.max(0, plannedHoursForMachine - cappedDowntimeHours);
+      const forkliftFailuresCount = machineStops.length;
+      // If no failures, MTBF is the progression time of the period
+      const forkliftMtbf = forkliftFailuresCount > 0 ? forkliftOperatingHours / forkliftFailuresCount : forkliftOperatingHours;
+      totalForkliftMtbfHours += forkliftMtbf;
     });
 
-    const totalDowntimeHours = allStopsInPeriod.reduce((acc, h) => {
-      const hStop = parseDateSafe(h.stopTime).getTime();
-      const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
-      const effectiveStart = Math.max(start.getTime(), hStop);
-      const effectiveEnd = Math.min(effectiveEndForPeriod, hEnd);
-      const durationMs = Math.max(0, effectiveEnd - effectiveStart);
-      
-      // Convert to "operational hours lost" (assuming 12h planned per day, so we scale the actual duration)
-      return acc + (durationMs / (1000 * 60 * 60)) * 0.5;
-    }, 0);
+    const totalOperatingHours = Math.max(0, totalPlannedHours - totalDowntimeHours);
 
-    const monthlyAvailability = totalPlannedHours > 0 
-      ? Math.max(0, ((totalPlannedHours - totalDowntimeHours) / totalPlannedHours) * 100) 
-      : 100;
+    // Calculate MTTR only for the chosen month's started/completed maintenance records
+    // This matches standard MTTR calculation of the spreadsheet and avoids prior-month overlaps
+    const failuresCount = filteredHistory.length;
 
-    // Filter using filteredHistory which already has year, month, forklift and operator filter applied
-    const monthlyCompleted = filteredHistory.filter(h => h.status === 'completed');
-    const monthlyNewFailures = filteredHistory;
+    let totalRepairTimeMs = 0;
+    filteredHistory.forEach(h => {
+      const sev = h.severity || (h.type === 'preventive' ? 'low' : 'high');
+      const isParada = sev === 'high' || sev === 'critical';
+      let repairStart: number;
+      if (isParada) {
+        repairStart = parseDateSafe(h.stopTime).getTime();
+      } else {
+        if (!h.startTime) return;
+        repairStart = parseDateSafe(h.startTime).getTime();
+      }
 
-    // MTTR calculation
-    const totalRepairTime = monthlyCompleted.reduce((acc, h) => {
-      const repairStart = h.startTime ? parseDateSafe(h.startTime).getTime() : parseDateSafe(h.stopTime).getTime();
       const repairEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
-      return acc + (repairEnd - repairStart);
-    }, 0);
-    const mttr = monthlyCompleted.length > 0 ? totalRepairTime / monthlyCompleted.length : 0;
+      totalRepairTimeMs += Math.max(0, repairEnd - repairStart);
+    });
 
-    // MTBF & Confiabilidade (Estimado p/ o período)
-    const totalOperatingHours = totalFleetUnits * 12 * totalPeriodDays;
-    const failuresCount = monthlyNewFailures.filter(f => f.type === 'corrective').length;
-    const mtbf = failuresCount > 0 ? totalOperatingHours / failuresCount : totalOperatingHours;
+    const mttr = failuresCount > 0 ? totalRepairTimeMs / failuresCount : 0;
+
+    // MTBF is the average of individual forklift MTBFs in hours
+    const mtbf = targetUniqueForklifts.length > 0 ? totalForkliftMtbfHours / targetUniqueForklifts.length : 0;
+
+    // Physical availability = (planned hours - downtime) / planned hours * 100
+    const monthlyAvailability = totalPlannedHours > 0 
+      ? Math.max(0, Math.min(100, ((totalPlannedHours - totalDowntimeHours) / totalPlannedHours) * 100)) 
+      : 100;
     
     // NOVO CÁLCULO DE CONFIABILIDADE (Hardened)
     const currentStoppedPenalty = filteredActiveStops.reduce((acc, s) => {
@@ -471,10 +554,10 @@ export function ManagerDashboard() {
       reliabilityScore: Math.max(0, reliabilityScore),
       currentAvailability,
       monthlyAvailability,
-      monthlyNewFailures: monthlyNewFailures.length,
-      monthlyCompleted: monthlyCompleted.length,
-      correctiveCount: monthlyNewFailures.filter(h => h.type === 'corrective').length,
-      preventiveCount: monthlyNewFailures.filter(h => h.type === 'preventive').length
+      monthlyNewFailures: filteredHistory.length,
+      monthlyCompleted: filteredHistory.filter(h => h.status === 'completed').length,
+      correctiveCount: filteredHistory.filter(h => h.type === 'corrective').length,
+      preventiveCount: filteredHistory.filter(h => h.type === 'preventive').length
     };
   }, [maintenanceHistory, uniqueForklifts, activeStops, filterYear, filterMonth, filterForklift, filterOperator, filteredHistory, matchesForkliftFilter]);
 
@@ -489,10 +572,22 @@ export function ManagerDashboard() {
       const key = serial || h.forkliftId;
       const name = f ? `${f.model} (${f.serialNumber})` : h.forkliftId;
       
-      if (!map[key]) map[key] = { count: 0, downtime: 0, name };
-      map[key].count += 1;
-      const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : Date.now();
-      map[key].downtime += (hEnd - parseDateSafe(h.stopTime).getTime());
+      const sev = h.severity || (h.type === 'preventive' ? 'low' : 'high');
+      const isParada = sev === 'high' || sev === 'critical';
+      
+      let startMs: number | null = null;
+      if (isParada) {
+        startMs = parseDateSafe(h.stopTime).getTime();
+      } else if (h.startTime) {
+        startMs = parseDateSafe(h.startTime).getTime();
+      }
+
+      if (startMs !== null) {
+        if (!map[key]) map[key] = { count: 0, downtime: 0, name };
+        map[key].count += 1;
+        const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : Date.now();
+        map[key].downtime += Math.max(0, hEnd - startMs);
+      }
     });
     return Object.values(map).sort((a, b) => b.count - a.count).slice(0, 5);
   }, [filteredHistory, forklifts]);
@@ -680,8 +775,8 @@ export function ManagerDashboard() {
     
     absentDates.forEach(dateStr => {
       const hadMaintenanceStopOnDay = maintenanceHistory.some(stop => {
-        const stopOpenDate = stop.stopTime.split('T')[0];
-        const stopCloseDate = stop.endTime ? stop.endTime.split('T')[0] : '9999-12-31';
+        const stopOpenDate = parseDateSafe(stop.stopTime).toISOString().split('T')[0];
+        const stopCloseDate = stop.endTime ? parseDateSafe(stop.endTime).toISOString().split('T')[0] : '9999-12-31';
         return stopOpenDate <= dateStr && stopCloseDate >= dateStr;
       });
 
@@ -1401,12 +1496,24 @@ export function ManagerDashboard() {
       return f ? `${f.model}` : s.forkliftId;
     })));
 
+    const falhasIminentesCount = activeStops.filter(s => {
+      const sev = s.severity || (s.type === 'preventive' ? 'low' : 'high');
+      return sev === 'medium';
+    }).length;
+
+    const reparosCount = activeStops.filter(s => {
+      const sev = s.severity || (s.type === 'preventive' ? 'low' : 'high');
+      return sev === 'low';
+    }).length;
+
     return {
       stops,
       awaitingParts,
       inProgress,
       onStandby,
-      affectedFleets
+      affectedFleets,
+      falhasIminentesCount,
+      reparosCount
     };
   }, [activeStops, uniqueForklifts]);
 
@@ -1589,7 +1696,16 @@ export function ManagerDashboard() {
                       </span>
                     </div>
 
-                    <div className="h-[200px] w-full flex items-center justify-center relative mt-4">
+                    <div className="h-[230px] w-full flex items-center justify-center relative mt-4">
+                      {/* Central Percentage Badge */}
+                      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                        <span className="text-2xl font-black text-slate-800 tracking-tight leading-none">
+                          {Number(kpis.monthlyAvailability).toFixed(1)}%
+                        </span>
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1.5">
+                          Disp.
+                        </span>
+                      </div>
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                           <Pie
@@ -1598,12 +1714,11 @@ export function ManagerDashboard() {
                               { name: 'Indisponível', value: Math.max(0, 100 - kpis.monthlyAvailability) }
                             ]}
                             cx="50%"
-                            cy="42%"
-                            innerRadius={20}
-                            outerRadius={45}
-                            paddingAngle={2}
+                            cy="50%"
+                            innerRadius={50}
+                            outerRadius={70}
+                            paddingAngle={3}
                             dataKey="value"
-                            label={({ value }) => `${Number(value).toFixed(1)}%`}
                           >
                             <Cell key="cell-0" fill="#10b981" />
                             <Cell key="cell-1" fill="#ef4444" />
@@ -1613,15 +1728,20 @@ export function ManagerDashboard() {
                             contentStyle={{ background: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff' }}
                             itemStyle={{ color: '#fff' }}
                           />
-                          <Legend 
-                            verticalAlign="bottom" 
-                            height={36} 
-                            iconType="circle"
-                            iconSize={8}
-                            formatter={(value) => <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">{value}</span>}
-                          />
                         </PieChart>
                       </ResponsiveContainer>
+                    </div>
+
+                    {/* Custom HTML responsive legend */}
+                    <div className="flex justify-center gap-6 mt-2 pt-2 border-t border-slate-100">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Disponível</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Indisponível</span>
+                      </div>
                     </div>
                   </div>
 
@@ -1769,7 +1889,7 @@ export function ManagerDashboard() {
                       <div>
                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">MTBF</p>
                         <p className="text-lg font-black text-slate-900 truncate mt-1">
-                          {kpis.mtbf > 0 ? `${kpis.mtbf.toFixed(0)}h` : "---"}
+                          {kpis.mtbf > 0 ? `${(kpis.mtbf / 24).toFixed(1)} dias` : "---"}
                         </p>
                       </div>
                       <div className="flex items-center gap-1 mt-2 text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-md w-fit uppercase">
@@ -1880,7 +2000,7 @@ export function ManagerDashboard() {
                         <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
                           <Wrench className="w-4 h-4" />
                         </div>
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Capacidade da Equipe</p>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Disponibilidade do Mecânico</p>
                       </div>
                       <span className={cn(
                         "text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider",
@@ -1890,7 +2010,16 @@ export function ManagerDashboard() {
                       </span>
                     </div>
 
-                    <div className="h-[200px] w-full flex items-center justify-center relative mt-4">
+                    <div className="h-[230px] w-full flex items-center justify-center relative mt-4">
+                      {/* Central Percentage Badge */}
+                      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                        <span className="text-2xl font-black text-slate-800 tracking-tight leading-none">
+                          {Number(mechanicAvailabilityMetrics.availablePercentage).toFixed(1)}%
+                        </span>
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1.5">
+                          Mecânicos
+                        </span>
+                      </div>
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                           <Pie
@@ -1899,12 +2028,11 @@ export function ManagerDashboard() {
                               { name: 'Indisponível', value: parseFloat((100 - mechanicAvailabilityMetrics.availablePercentage).toFixed(1)) }
                             ]}
                             cx="50%"
-                            cy="42%"
-                            innerRadius={20}
-                            outerRadius={45}
-                            paddingAngle={2}
+                            cy="50%"
+                            innerRadius={50}
+                            outerRadius={70}
+                            paddingAngle={3}
                             dataKey="value"
-                            label={({ value }) => `${Number(value).toFixed(1)}%`}
                           >
                             <Cell key="cell-0" fill="#3b82f6" />
                             <Cell key="cell-1" fill="#f59e0b" />
@@ -1914,15 +2042,20 @@ export function ManagerDashboard() {
                             contentStyle={{ background: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff' }}
                             itemStyle={{ color: '#fff' }}
                           />
-                          <Legend 
-                            verticalAlign="bottom" 
-                            height={36} 
-                            iconType="circle"
-                            iconSize={8}
-                            formatter={(value) => <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">{value}</span>}
-                          />
                         </PieChart>
                       </ResponsiveContainer>
+                    </div>
+
+                    {/* Custom HTML responsive legend */}
+                    <div className="flex justify-center gap-6 mt-2 pt-2 border-t border-slate-100">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Disponível</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Indisponível</span>
+                      </div>
                     </div>
                   </div>
 
@@ -1943,6 +2076,138 @@ export function ManagerDashboard() {
                   </div>
                 </div>
               </div>
+
+              {/* Seção de Análise e Detalhamento de Filtros - Gráficos de Motivos e Peças */}
+              <div id="dashboard-filtered-charts" className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-6">
+                
+                {/* Section B: Principais Motivos de Parada */}
+                <div id="section-reasons-distribution" className="bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-200/80 shadow-sm space-y-6">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 bg-red-50 text-red-600 rounded-2xl">
+                      <AlertTriangle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-black text-slate-950 tracking-tight">Principais Motivos de Parada</h3>
+                      <p className="text-xs text-slate-500 font-medium">Distribuição das causas mais frequentes</p>
+                    </div>
+                  </div>
+
+                  {maintenanceReasons.length === 0 ? (
+                    <div className="py-12 text-center text-slate-400 font-medium text-sm font-sans">
+                      Nenhuma parada com motivo registrado neste período.
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="h-[280px] w-full flex items-center justify-center">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart
+                            data={maintenanceReasons}
+                            margin={{ top: 20, right: 10, left: -25, bottom: 5 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                            <XAxis 
+                              dataKey="name" 
+                              axisLine={false} 
+                              tickLine={false} 
+                              tick={{ fill: '#64748b', fontSize: 9, fontWeight: 700 }}
+                              interval={0}
+                              angle={-15}
+                              textAnchor="end"
+                              height={50}
+                            />
+                            <YAxis 
+                              axisLine={false} 
+                              tickLine={false} 
+                              tick={{ fill: '#64748b', fontSize: 9, fontWeight: 700 }}
+                              allowDecimals={false}
+                            />
+                            <Tooltip 
+                              cursor={{ fill: 'rgba(241, 145, 149, 0.1)' }}
+                              contentStyle={{ background: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff' }}
+                              itemStyle={{ color: '#fff' }}
+                            />
+                            <Bar 
+                              dataKey="value" 
+                              radius={[8, 8, 0, 0]} 
+                              barSize={32}
+                            >
+                              {maintenanceReasons.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={REASONS_COLORS[index % REASONS_COLORS.length]} />
+                              ))}
+                              <LabelList 
+                                dataKey="value" 
+                                position="top" 
+                                style={{ fill: '#475569', fontSize: 10, fontWeight: 800 }} 
+                              />
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+
+                      {/* Legend with details */}
+                      <div className="grid grid-cols-2 gap-3 pt-4 border-t border-slate-50 font-sans">
+                        {maintenanceReasons.map((entry, index) => (
+                          <div key={entry.name} className="flex items-center gap-2 font-sans">
+                            <div 
+                              className="w-3 h-3 rounded-full shrink-0" 
+                              style={{ backgroundColor: REASONS_COLORS[index % REASONS_COLORS.length] }}
+                            />
+                            <div className="min-w-0">
+                              <p className="text-xs font-extrabold text-slate-900 truncate">{entry.name}</p>
+                              <p className="text-[10px] text-slate-500 font-bold">{entry.value} {entry.value === 1 ? 'ocorrência' : 'ocorrências'}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Section B: Peças Utilizadas */}
+                <div id="section-parts-breakdown" className="bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-200/80 shadow-sm space-y-6 flex flex-col justify-between">
+                  <div className="space-y-6">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-2xl">
+                        <Package className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-black text-slate-950 tracking-tight">Consumo de Peças Substituídas</h3>
+                        <p className="text-xs text-slate-500 font-medium">Classificação das peças mais requisitadas para manutenção</p>
+                      </div>
+                    </div>
+
+                    {partsData.length === 0 ? (
+                      <div className="py-12 text-center text-slate-400 font-medium text-sm font-sans">
+                        Nenhuma utilização de peças registrada para o período selecionado.
+                      </div>
+                    ) : (
+                      <div className="space-y-4 max-h-[300px] overflow-y-auto pr-1">
+                        {partsData.map((part) => {
+                          const maxQuantity = Math.max(...partsData.map(p => p.quantity));
+                          const percentage = maxQuantity > 0 ? (part.quantity / maxQuantity) * 100 : 0;
+                          return (
+                            <div key={part.name} className="space-y-1 bg-slate-50/55 p-3 rounded-2xl border border-slate-105 font-sans">
+                              <div className="flex justify-between items-center text-xs">
+                                <span className="font-extrabold text-slate-900 truncate max-w-[200px]">{part.name}</span>
+                                <span className="font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md text-[10px]">{part.quantity} un</span>
+                              </div>
+                              <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                                <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${percentage}%` }} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="pt-4 border-t border-slate-100 mt-4 flex items-center justify-between text-[11px] font-bold text-slate-500 font-sans">
+                    <span>Total de Peças Diferentes</span>
+                    <span className="text-slate-950 font-black">{partsData.length} itens</span>
+                  </div>
+                </div>
+
+              </div>
             </div>
 
             {/* Seção 2: Sinalizadores de Hoje & Tempo Real */}
@@ -1955,40 +2220,47 @@ export function ManagerDashboard() {
               </div>
 
               <div id="dashboard-realtime-metrics-grid" className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Card 5: Status das Paradas Ativas */}
+                   {/* Card 5: Status das Paradas Ativas */}
                 <div id="metric-card-parts-waiting" className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
                   <div className="flex justify-between items-start">
-                    <div className="p-3 bg-indigo-50 rounded-2xl text-indigo-600">
+                    <div className="p-3 bg-red-50 text-red-600 rounded-2xl">
                       <Layers className="w-5 h-5" />
                     </div>
                     <span className={cn(
                       "text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider",
                       activeStopsStats.stops.length > 0 ? "bg-red-50 text-red-700 font-bold border border-red-200" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
                     )}>
-                      {activeStopsStats.stops.length > 0 ? `${activeStopsStats.stops.length} Ativas` : "Sem Paradas Ativas"}
+                      {activeStopsStats.stops.length > 0 ? `${activeStopsStats.stops.length} Ativas` : "Sem Paradas"}
                     </span>
                   </div>
                   
                   <div>
                     <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Status das Paradas Ativas</p>
                     
-                    {/* Status counts layout */}
-                    <div className="grid grid-cols-3 gap-2 mt-2">
-                      <div className="bg-amber-50 rounded-xl p-2 text-center pb-2">
-                        <p className="text-[9px] font-black text-amber-800 uppercase">Peças</p>
-                        <p className="text-base font-extrabold text-amber-950 mt-0.5">{activeStopsStats.awaitingParts.length}</p>
-                      </div>
-                      <div className="bg-blue-50 rounded-xl p-2 text-center pb-2">
-                        <p className="text-[9px] font-black text-blue-800 uppercase">Iniciadas</p>
-                        <p className="text-base font-extrabold text-blue-950 mt-0.5">{activeStopsStats.inProgress.length}</p>
-                      </div>
-                      <div className="bg-rose-50 rounded-xl p-2 text-center pb-2">
-                        <p className="text-[9px] font-black text-rose-800 uppercase">Espera</p>
-                        <p className="text-base font-extrabold text-rose-950 mt-0.5">{activeStopsStats.onStandby.length}</p>
-                      </div>
+                    <div className="mt-2 flex items-baseline gap-1.5">
+                      <span className="text-4xl font-extrabold text-red-600 tracking-tight">
+                        {activeStopsStats.stops.length}
+                      </span>
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">
+                        Paradas Ativas Atualmente
+                      </span>
                     </div>
                   </div>
 
+                  {/* Summary of Execution States for Stopped Machines */}
+                  <div className="flex flex-wrap gap-2 text-[9px] font-bold text-slate-500 my-1 font-sans">
+                    <span className="bg-rose-50 text-rose-700 px-2 py-1 rounded-lg border border-rose-105 flex items-center gap-1">
+                      Aguardando Início: <strong className="text-rose-850 font-black">{activeStopsStats.onStandby.length}</strong>
+                    </span>
+                    <span className="bg-blue-50 text-blue-700 px-2 py-1 rounded-lg border border-blue-105 flex items-center gap-1">
+                      Iniciadas: <strong className="text-blue-800 font-black">{activeStopsStats.inProgress.length}</strong>
+                    </span>
+                    <span className="bg-amber-50 text-amber-700 px-2 py-1 rounded-lg border border-amber-205 flex items-center gap-1">
+                      Aguardando Peças: <strong className="text-amber-800 font-black">{activeStopsStats.awaitingParts.length}</strong>
+                    </span>
+                  </div>
+
+                  {/* List of Stopped Machines & Execution Status */}
                   <div id="active-paradas-status-list" className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1 border border-slate-100 p-2 rounded-xl bg-slate-50/30">
                     {activeStopsStats.stops.length === 0 ? (
                       <p className="text-[11px] text-slate-400 font-medium pt-2 text-center">Nenhuma empilhadeira parada ativamente.</p>
@@ -1996,31 +2268,33 @@ export function ManagerDashboard() {
                       activeStopsStats.stops.map(s => {
                         const fork = uniqueForklifts.find(f => f.id === s.forkliftId) || forklifts.find(f => f.id === s.forkliftId);
                         
-                        let badgeColor = "bg-rose-105 bg-rose-50 text-rose-700 border-rose-200";
-                        let statusLabel = "Espera";
+                        let badgeColor = "bg-rose-50 text-rose-700 border-rose-200";
+                        let statusLabel = "Não Iniciada (Aguardando Início)";
                         if (s.status === 'awaiting_parts') {
-                          badgeColor = "bg-amber-100/10 bg-amber-50 text-amber-700 border-amber-200";
-                          statusLabel = "Sem Peça";
+                          badgeColor = "bg-amber-50 text-amber-700 border-amber-200";
+                          statusLabel = "Aguardando Peças (Iniciado)";
                         } else if (s.status === 'in_progress') {
-                          badgeColor = "bg-blue-100 text-blue-700 border-blue-200";
+                          badgeColor = "bg-blue-50 text-blue-700 border-blue-100";
                           statusLabel = "Iniciada";
                         }
 
                         return (
-                          <div key={s.id} className="text-[11px] flex items-center justify-between gap-2 border-b border-slate-100 pb-1.5 last:border-0 hover:bg-slate-50/85 p-1 rounded-lg transition-colors">
-                            <span className="font-extrabold text-slate-900 flex-1 pr-1 leading-snug break-words" title={fork ? `Frota: ${fork.serialNumber || 'Sem número'} | ${fork.model} (${fork.id})` : s.forkliftId}>
-                              {fork ? (
-                                <span className="inline-flex items-center gap-1.5 flex-wrap">
-                                  <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-black tracking-tight border border-blue-105" title={`ID: ${fork.id}`}>
-                                    Nº {fork.serialNumber || fork.id}
+                          <div key={s.id} className="text-[11px] flex flex-col gap-1 border-b border-slate-100 pb-1.5 last:border-0 hover:bg-slate-50/85 p-1 rounded-lg transition-colors text-left font-sans">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-extrabold text-slate-900 flex-1 pr-1 leading-snug break-words font-sans" title={fork ? `Frota: ${fork.serialNumber || 'Sem número'} | ${fork.model} (${fork.id})` : s.forkliftId}>
+                                {fork ? (
+                                  <span className="inline-flex items-center gap-1.5 flex-wrap">
+                                    <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-black tracking-tight border border-blue-105" title={`ID: ${fork.id}`}>
+                                      Nº {fork.serialNumber || fork.id}
+                                    </span>
+                                    <span className="text-slate-705 font-bold">{fork.model}</span>
                                   </span>
-                                  <span className="text-slate-700 font-bold">{fork.model}</span>
-                                </span>
-                              ) : (
-                                <span className="bg-red-50 text-red-600 px-1.5 py-0.5 rounded text-[10px] font-black">Nº {s.forkliftId}</span>
-                              )}
-                            </span>
-                            <span className={cn("text-[8px] font-black px-1.5 py-0.5 rounded border uppercase tracking-wider shrink-0", badgeColor)}>
+                                ) : (
+                                  <span className="bg-red-50 text-red-600 px-1.5 py-0.5 rounded text-[10px] font-black">Nº {s.forkliftId}</span>
+                                )}
+                              </span>
+                            </div>
+                            <span className={cn("text-[8px] font-black px-1.5 py-0.5 rounded border uppercase tracking-wider shrink-0 w-fit", badgeColor)}>
                               {statusLabel}
                             </span>
                           </div>
@@ -2031,9 +2305,24 @@ export function ManagerDashboard() {
 
                   <div className="flex justify-between items-center text-[10px] text-slate-400 font-semibold border-t border-slate-100 pt-2 shrink-0">
                     <span className="truncate">Frotas Afetadas:</span>
-                    <span className="text-slate-700 font-extrabold truncate max-w-[150px] inline-block" title={activeStopsStats.affectedFleets.join(', ')}>
+                    <span className="text-slate-705 font-extrabold truncate max-w-[150px] inline-block" title={activeStopsStats.affectedFleets.join(', ')}>
                       {activeStopsStats.affectedFleets.length > 0 ? activeStopsStats.affectedFleets.join(', ') : 'Nenhuma'}
                     </span>
+                  </div>
+
+                  {/* Title and stats for Outras Manutenções */}
+                  <div className="border-t border-slate-100 pt-3 mt-1.5">
+                    <p className="text-xs font-black text-slate-700 uppercase tracking-wider mb-2 text-left">Outras Manutenções</p>
+                    <div className="grid grid-cols-2 gap-2 font-sans">
+                      <div className="bg-amber-50/45 p-2.5 rounded-xl border border-amber-100/30 text-left">
+                        <p className="text-[8px] font-black text-amber-800 uppercase tracking-wider">Falha Iminente</p>
+                        <p className="text-base font-extrabold text-amber-950 mt-1">{activeStopsStats.falhasIminentesCount} hoje</p>
+                      </div>
+                      <div className="bg-blue-50/30 p-2.5 rounded-xl border border-blue-100/35 text-left">
+                        <p className="text-[8px] font-black text-blue-800 uppercase tracking-wider">Reparos</p>
+                        <p className="text-base font-extrabold text-blue-950 mt-1">{activeStopsStats.reparosCount} hoje</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -2137,136 +2426,126 @@ export function ManagerDashboard() {
               </div>
             </div>
 
-            {/* Main Analysis and Breakdown Sections */}
-            <div id="dashboard-breakdown-sections" className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              
-              {/* Section B: Principais Motivos de Parada */}
-              <div id="section-reasons-distribution" className="bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-200/80 shadow-sm space-y-6">
-                <div className="flex items-center gap-3">
-                  <div className="p-2.5 bg-red-50 text-red-600 rounded-2xl">
-                    <AlertTriangle className="w-5 h-5" />
-                  </div>
+
+
+            {/* Debug panel specifically designed to transparently audit database records live inside the container preview */}
+            <div className="mt-8 mx-auto max-w-7xl px-4 py-6 bg-slate-900 border border-slate-800 rounded-3xl text-slate-100 select-text overflow-hidden font-mono text-xs">
+              <details className="group">
+                <summary className="flex items-center justify-between cursor-pointer font-black text-slate-200 uppercase tracking-widest select-none p-2 hover:bg-slate-800 rounded-xl transition-colors">
+                  <span>🛠️ PAINEL DE AUDITORIA DE DADOS BI (FIREBASE)</span>
+                  <span className="text-[10px] bg-slate-800 px-2 py-1 rounded-lg group-open:hidden">Expandir (Ver Ocorrências & Máquinas)</span>
+                  <span className="text-[10px] bg-slate-800 px-2 py-1 rounded-lg hidden group-open:inline">Recolher</span>
+                </summary>
+                
+                <div className="mt-6 space-y-8 pt-4 border-t border-slate-800 max-h-[600px] overflow-y-auto pr-2">
                   <div>
-                    <h3 className="text-lg font-black text-slate-950 tracking-tight">Principais Motivos de Parada</h3>
-                    <p className="text-xs text-slate-500 font-medium">Distribuição das causas mais frequentes</p>
+                    <h4 className="text-sm font-black text-blue-400 mb-3 border-b border-bold border-blue-900 pb-1">1. TODOS OS REGISTROS DE MANUTENÇÃO (ÚLTIMOS {maintenanceHistory.length})</h4>
+                    <p className="text-[10px] text-slate-400 mb-4 font-sans">Listagem crua da coleção `maintenance` contendo paradas concluídas, pendentes e em andamento.</p>
+                    <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-900 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
+                            <th className="p-3">#</th>
+                            <th className="p-3">ID Documento</th>
+                            <th className="p-3">ID Máquina (Cadastrada)</th>
+                            <th className="p-3">Item Resolvido</th>
+                            <th className="p-3">Tipo</th>
+                            <th className="p-3">Severidade</th>
+                            <th className="p-3">Histórico de Datas</th>
+                            <th className="p-3">Status</th>
+                            <th className="p-3">Descrição / Observações</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800 text-[11px]">
+                          {maintenanceHistory.map((h, i) => {
+                            const forkliftObj = forklifts.find(f => f.id === h.forkliftId || (f.serialNumber && h.forkliftId && f.serialNumber.trim().toLowerCase() === h.forkliftId.trim().toLowerCase()));
+                            return (
+                              <tr key={h.id} className="hover:bg-slate-900/50">
+                                <td className="p-3 text-slate-500 font-bold">{i+1}</td>
+                                <td className="p-3 text-emerald-400 font-bold">{h.id}</td>
+                                <td className="p-3 text-amber-400 font-bold">{h.forkliftId || 'N/A'}</td>
+                                <td className="p-3 text-slate-300">
+                                  {forkliftObj ? `${forkliftObj.model} (${forkliftObj.serialNumber})` : '⚠️ NÃO ENCONTRADA (Órfã/Dummy)'}
+                                </td>
+                                <td className="p-3 text-slate-300 capitalize">{h.type || 'N/A'}</td>
+                                <td className="p-3">
+                                  <span className={`px-1.5 py-0.5 rounded-md font-bold uppercase text-[9px] ${
+                                    h.severity === 'high' || h.severity === 'critical' || (!h.severity && h.type !== 'preventive') 
+                                      ? 'bg-red-950 text-red-400 border border-red-900' 
+                                      : h.severity === 'medium' ? 'bg-amber-950 text-amber-400 border border-amber-900' 
+                                      : 'bg-emerald-950 text-emerald-400 border border-emerald-900'
+                                  }`}>
+                                    {h.severity || (h.type === 'preventive' ? 'low' : 'high')}
+                                  </span>
+                                </td>
+                                <td className="p-3 space-y-1 font-mono text-[10px]">
+                                  <div>⏱️ Parada: <span className="text-indigo-400">{h.stopTime || 'Não definida'}</span></div>
+                                  <div>🔧 Início: <span className="text-amber-400">{h.startTime || 'Não iniciada'}</span></div>
+                                  <div>🏁 Fim: <span className="text-emerald-400">{h.endTime || 'Em andamento'}</span></div>
+                                </td>
+                                <td className="p-3">
+                                  <span className={`px-1.5 py-0.5 rounded font-black text-[9px] uppercase ${
+                                    h.status === 'completed' 
+                                      ? 'bg-emerald-900 text-emerald-200' 
+                                      : h.status === 'in_progress' ? 'bg-indigo-900 text-indigo-150' 
+                                      : h.status === 'awaiting_parts' ? 'bg-amber-900 text-amber-200'
+                                      : 'bg-yellow-900 text-yellow-105'
+                                  }`}>
+                                    {h.status || 'pending'}
+                                  </span>
+                                </td>
+                                <td className="p-3 max-w-xs truncate text-slate-300" title={h.description}>
+                                  {h.description || '-'}
+                                  {h.repairNotes && <p className="text-[10px] text-slate-500 mt-1 italic">Obs: {h.repairNotes}</p>}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="text-sm font-black text-rose-400 mb-3 border-b border-bold border-rose-900 pb-1">2. TABELA CANÔNICA DE MÁQUINAS DA FROTA (FROTA TOTAL: {uniqueForklifts.length} MÁQUINAS FILTRADAS)</h4>
+                    <p className="text-[10px] text-slate-400 mb-4 font-sans">Lista definitiva exposta a todos os cálculos de BI, excluindo registros de teste/lixo por serial.</p>
+                    <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-900 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
+                            <th className="p-3">#</th>
+                            <th className="p-3">ID Documento</th>
+                            <th className="p-3">Modelo</th>
+                            <th className="p-3">Nº de Série</th>
+                            <th className="p-3">Status Atual</th>
+                            <th className="p-3">Operador Designado</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800 text-[11px]">
+                          {uniqueForklifts.map((f, i) => (
+                            <tr key={f.id} className="hover:bg-slate-900/50">
+                              <td className="p-3 text-slate-500 font-bold">{i+1}</td>
+                              <td className="p-3 text-emerald-400">{f.id}</td>
+                              <td className="p-3 text-slate-200 font-bold capitalize">{f.model}</td>
+                              <td className="p-3 text-amber-400 font-bold">{f.serialNumber || 'N/A'}</td>
+                              <td className="p-3 text-slate-300 capitalize">
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                  f.status === 'stopped' ? 'bg-red-950 text-red-400 border border-red-900' :
+                                  f.status === 'maintenance' ? 'bg-indigo-950 text-indigo-400 border border-indigo-900' :
+                                  'bg-emerald-950 text-emerald-400 border border-emerald-900'
+                                }`}>
+                                  {f.status}
+                                </span>
+                              </td>
+                              <td className="p-3 text-slate-400">{f.assignedOperatorName || f.assignedOperatorId || 'Sem designação'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
-
-                {maintenanceReasons.length === 0 ? (
-                  <div className="py-12 text-center text-slate-400 font-medium text-sm">
-                    Nenhuma parada com motivo registrado neste período.
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="h-[280px] w-full flex items-center justify-center">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart
-                          data={maintenanceReasons}
-                          margin={{ top: 20, right: 10, left: -25, bottom: 5 }}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                          <XAxis 
-                            dataKey="name" 
-                            axisLine={false} 
-                            tickLine={false} 
-                            tick={{ fill: '#64748b', fontSize: 9, fontWeight: 700 }}
-                            interval={0}
-                            angle={-15}
-                            textAnchor="end"
-                            height={50}
-                          />
-                          <YAxis 
-                            axisLine={false} 
-                            tickLine={false} 
-                            tick={{ fill: '#64748b', fontSize: 9, fontWeight: 700 }}
-                            allowDecimals={false}
-                          />
-                          <Tooltip 
-                            cursor={{ fill: 'rgba(241, 245, 249, 0.4)' }}
-                            contentStyle={{ background: '#0f172a', borderRadius: '12px', border: 'none', color: '#fff' }}
-                            itemStyle={{ color: '#fff' }}
-                          />
-                          <Bar 
-                            dataKey="value" 
-                            radius={[8, 8, 0, 0]} 
-                            barSize={32}
-                          >
-                            {maintenanceReasons.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={REASONS_COLORS[index % REASONS_COLORS.length]} />
-                            ))}
-                            <LabelList 
-                              dataKey="value" 
-                              position="top" 
-                              style={{ fill: '#475569', fontSize: 10, fontWeight: 800 }} 
-                            />
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-
-                    {/* Legend with details */}
-                    <div className="grid grid-cols-2 gap-3 pt-4 border-t border-slate-50">
-                      {maintenanceReasons.map((entry, index) => (
-                        <div key={entry.name} className="flex items-center gap-2">
-                          <div 
-                            className="w-3 h-3 rounded-full shrink-0" 
-                            style={{ backgroundColor: REASONS_COLORS[index % REASONS_COLORS.length] }}
-                          />
-                          <div className="min-w-0">
-                            <p className="text-xs font-extrabold text-slate-900 truncate">{entry.name}</p>
-                            <p className="text-[10px] text-slate-500 font-bold">{entry.value} {entry.value === 1 ? 'ocorrência' : 'ocorrências'}</p>
-                          </div>
-                      </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Section B: Peças Utilizadas */}
-              <div id="section-parts-breakdown" className="bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-200/80 shadow-sm space-y-6 flex flex-col justify-between">
-                <div className="space-y-6">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-2xl">
-                      <Package className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-black text-slate-950 tracking-tight">Consumo de Peças Substituídas</h3>
-                      <p className="text-xs text-slate-500 font-medium">Classificação das peças mais requisitadas para manutenção</p>
-                    </div>
-                  </div>
-
-                  {partsData.length === 0 ? (
-                    <div className="py-12 text-center text-slate-400 font-medium text-sm">
-                      Nenhuma utilização de peças registrada para o período selecionado.
-                    </div>
-                  ) : (
-                    <div className="space-y-4 max-h-[300px] overflow-y-auto pr-1">
-                      {partsData.map((part) => {
-                        const maxQuantity = Math.max(...partsData.map(p => p.quantity));
-                        const percentage = maxQuantity > 0 ? (part.quantity / maxQuantity) * 100 : 0;
-                        return (
-                          <div key={part.name} className="space-y-1 bg-slate-50/55 p-3 rounded-2xl border border-slate-100">
-                            <div className="flex justify-between items-center text-xs">
-                              <span className="font-extrabold text-slate-900 truncate max-w-[200px]">{part.name}</span>
-                              <span className="font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md text-[10px]">{part.quantity} un</span>
-                            </div>
-                            <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
-                              <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${percentage}%` }} />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                <div className="pt-4 border-t border-slate-100 mt-4 flex items-center justify-between text-[11px] font-bold text-slate-500">
-                  <span>Total de Peças Diferentes</span>
-                  <span className="text-slate-950 font-black">{partsData.length} itens</span>
-                </div>
-              </div>
-
+              </details>
             </div>
 
           </div>
