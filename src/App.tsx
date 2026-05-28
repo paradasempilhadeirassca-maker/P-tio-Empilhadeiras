@@ -16,8 +16,6 @@ import { ActiveMachinesView } from './components/ActiveMachinesView';
 import { PreventiveView } from './components/PreventiveView';
 import { PartsInventory } from './components/PartsInventory';
 import { ChecklistView } from './components/ChecklistView';
-import { LeaderView } from './components/LeaderView';
-import { OperationalIndicators } from './components/OperationalIndicators';
 import { FleetManagement } from './components/FleetManagement';
 import { requestNotificationPermission } from './lib/notifications';
 import { 
@@ -99,8 +97,6 @@ function AppContent() {
       case 'mech-preventive': return <PreventiveView />;
       case 'parts-inventory': return <PartsInventory />;
       case 'checklist': return <ChecklistView />;
-      case 'leader-apontamento': return <LeaderView />;
-      case 'operational-indicators': return <OperationalIndicators />;
       case 'fleet': return <FleetManagement />;
       case 'history': {
         const historyRole = (profile.role === 'manager' || profile.role === 'leader') 

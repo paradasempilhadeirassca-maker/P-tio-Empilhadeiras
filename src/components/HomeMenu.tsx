@@ -59,11 +59,10 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isChangingPass, setIsChangingPass] = useState(false);
   const [passError, setPassError] = useState('');
-  const [activeTab, setActiveTab] = useState<'profile' | 'system' | 'goals' | 'mechanics'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'system' | 'mechanics'>('profile');
   const [isResetting, setIsResetting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetStatus, setResetStatus] = useState<{ type: 'success' | 'error' | null, message: string }>({ type: null, message: '' });
-  const [editingGoal, setEditingGoal] = useState<{ operationType: string, shift: '1' | '2', value: string } | null>(null);
   
   // Mechanic presence/absence (pointing) states
   const [selectedMechanicId, setSelectedMechanicId] = useState<string>('');
@@ -113,51 +112,6 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
     } catch (err: any) {
       console.error("Error deleting absence:", err);
       alert("Erro ao remover: " + err.message);
-    }
-  };
-
-  const handleUpdateGoal = async () => {
-    if (!editingGoal) return;
-    
-    const goalValue = parseFloat(editingGoal.value);
-    if (isNaN(goalValue)) return;
-    const path = 'operation_goals';
-
-    try {
-      const q = query(
-        collection(db, path), 
-        where('operationType', '==', editingGoal.operationType),
-        where('shift', '==', editingGoal.shift)
-      );
-      const snapshot = await getDocs(q);
-      
-      if (!snapshot.empty) {
-        await updateDoc(doc(db, path, snapshot.docs[0].id), {
-          goal: goalValue,
-          updatedAt: new Date().toISOString()
-        });
-      } else {
-        const batch = writeBatch(db);
-        const newGoalRef = doc(collection(db, path));
-        batch.set(newGoalRef, {
-          operationType: editingGoal.operationType,
-          shift: editingGoal.shift,
-          goal: goalValue,
-          updatedAt: new Date().toISOString()
-        });
-        await batch.commit();
-      }
-      setEditingGoal(null);
-    } catch (error) {
-      handleFirestoreError(error, FirestoreOp.WRITE, path);
-    }
-  };
-
-  const handleResetGoal = async (goalId: string) => {
-    try {
-      await deleteDoc(doc(db, 'operation_goals', goalId));
-    } catch (error) {
-      handleFirestoreError(error, FirestoreOp.DELETE, `operation_goals/${goalId}`);
     }
   };
 
@@ -268,10 +222,8 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
 
   const menuItems = {
     manager: [
-      { id: 'operational-indicators', label: 'Indicadores', description: 'Visão operacional e gargalos', icon: Zap, color: 'bg-amber-500' },
       { id: 'dashboard', label: 'Dashboard', description: 'Indicadores e KPIs de performance', icon: LayoutDashboard, color: 'bg-blue-500' },
       { id: 'fleet', label: 'Gestão de Frota', description: 'Cadastrar máquinas e operadores', icon: Truck, color: 'bg-slate-800' },
-      { id: 'leader-apontamento', label: 'Apontamentos', description: 'Registro de eventos em tempo real', icon: Activity, color: 'bg-indigo-600' },
       { id: 'checklist', label: 'Check-list Diário', description: 'Inspeção de conformidade diária', icon: ClipboardCheck, color: 'bg-cyan-500' },
       { id: 'op-register', label: 'Registrar Ocorrência', description: 'Abrir nova ordem de manutenção', icon: PlusCircle, color: 'bg-red-500' },
       { id: 'op-active', label: 'Ocorrências Registradas', description: 'Ver frota e eventos em tempo real', icon: AlertTriangle, color: 'bg-amber-500' },
@@ -281,8 +233,6 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
       { id: 'history', label: 'Histórico Geral', description: 'Todos os registros do sistema', icon: History, color: 'bg-slate-600' },
     ],
     leader: [
-      { id: 'operational-indicators', label: 'Indicadores', description: 'Visão operacional e gargalos', icon: Zap, color: 'bg-amber-500' },
-      { id: 'leader-apontamento', label: 'Apontamentos', description: 'Registro de eventos em tempo real', icon: Activity, color: 'bg-indigo-600' },
       { id: 'fleet', label: 'Gestão de Frota', description: 'Cadastrar máquinas e operadores', icon: Truck, color: 'bg-slate-800' },
       { id: 'op-register', label: 'Registrar Ocorrência', description: 'Abrir nova ordem de manutenção', icon: PlusCircle, color: 'bg-red-500' },
       { id: 'dashboard', label: 'Dashboard', description: 'Ver indicadores de performance', icon: LayoutDashboard, color: 'bg-blue-500' },
@@ -436,26 +386,15 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
                     Mecânicos
                   </button>
                   {profile.role === 'manager' && (
-                    <>
-                      <button
-                        onClick={() => setActiveTab('goals')}
-                        className={cn(
-                          "flex-1 py-3 text-xs font-black uppercase tracking-widest rounded-xl transition-all",
-                          activeTab === 'goals' ? "bg-white text-emerald-600 shadow-sm" : "text-slate-400 hover:text-slate-600"
-                        )}
-                      >
-                        Metas
-                      </button>
-                      <button
-                        onClick={() => setActiveTab('system')}
-                        className={cn(
-                          "flex-1 py-3 text-xs font-black uppercase tracking-widest rounded-xl transition-all",
-                          activeTab === 'system' ? "bg-white text-red-600 shadow-sm" : "text-slate-400 hover:text-slate-600"
-                        )}
-                      >
-                        Sistema
-                      </button>
-                    </>
+                    <button
+                      onClick={() => setActiveTab('system')}
+                      className={cn(
+                        "flex-1 py-3 text-xs font-black uppercase tracking-widest rounded-xl transition-all",
+                        activeTab === 'system' ? "bg-white text-red-600 shadow-sm" : "text-slate-400 hover:text-slate-600"
+                      )}
+                    >
+                      Sistema
+                    </button>
                   )}
                 </div>
               )}
@@ -642,77 +581,6 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
                           </table>
                         </div>
                       </div>
-                    </div>
-                  </div>
-                ) : activeTab === 'goals' ? (
-                  <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Zap className="w-5 h-5 text-emerald-500" />
-                      <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Metas de Operação</h3>
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-4">
-                      {['tirar_producao', 'quebra', 'emblocamento', 'carregamento'].map((type) => (
-                        <div key={type} className="bg-slate-50 p-5 rounded-3xl border border-slate-200">
-                          <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest mb-4 flex items-center justify-between">
-                            {type.replace('_', ' ')}
-                            <span className="text-[10px] text-slate-400">Total Fardos / Turno</span>
-                          </h4>
-                          <div className="grid grid-cols-2 gap-3">
-                            {['1', '2'].map((shift) => {
-                              const existingGoal = operationGoals.find(g => g.operationType === type && g.shift === shift);
-                              const isEditing = editingGoal?.operationType === type && editingGoal?.shift === shift;
-
-                              return (
-                                <div key={shift} className="space-y-1.5">
-                                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center justify-between">
-                                    Turno {shift}
-                                    {existingGoal && !isEditing && (
-                                      <button 
-                                        onClick={() => handleResetGoal(existingGoal.id!)}
-                                        className="text-red-400 hover:text-red-600"
-                                      >
-                                        <History className="w-3 h-3" />
-                                      </button>
-                                    )}
-                                  </label>
-                                  {isEditing ? (
-                                    <div className="flex gap-1.5">
-                                      <input 
-                                        type="number"
-                                        value={editingGoal.value}
-                                        onChange={(e) => setEditingGoal({ ...editingGoal, value: e.target.value })}
-                                        className="flex-1 bg-white border-2 border-blue-500 rounded-xl px-3 py-2 text-sm font-bold outline-none"
-                                        autoFocus
-                                      />
-                                      <button 
-                                        onClick={handleUpdateGoal}
-                                        className="bg-blue-600 text-white p-2 rounded-xl hover:bg-blue-700"
-                                      >
-                                        <Save className="w-4 h-4" />
-                                      </button>
-                                      <button 
-                                        onClick={() => setEditingGoal(null)}
-                                        className="bg-slate-200 text-slate-500 p-2 rounded-xl hover:bg-slate-300"
-                                      >
-                                        <X className="w-4 h-4" />
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <button 
-                                      onClick={() => setEditingGoal({ operationType: type, shift: shift as '1' | '2', value: existingGoal?.goal?.toString() || '' })}
-                                      className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-black text-slate-700 text-left hover:border-emerald-300 transition-all flex justify-between items-center group"
-                                    >
-                                      <span>{existingGoal?.goal || 'N/A'}</span>
-                                      <Settings className="w-3.5 h-3.5 text-slate-300 group-hover:text-emerald-500 transition-colors" />
-                                    </button>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ))}
                     </div>
                   </div>
                 ) : (
