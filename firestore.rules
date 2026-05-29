@@ -169,7 +169,7 @@ service cloud.firestore {
     }
 
     match /operational_events/{eventId} {
-      allow read: if isSignedIn() && (isManager() || isLeader() || isMechanic());
+      allow read: if isSignedIn();
       allow create: if (isLeader() || isManager()) && isValidOperationalEvent(incoming()) && isValidId(incoming().forkliftId);
       allow update, delete: if isManager();
     }
@@ -193,7 +193,7 @@ service cloud.firestore {
     }
 
     match /shift_reports/{reportId} {
-      allow read: if isSignedIn() && (isManager() || isLeader());
+      allow read: if isSignedIn();
       allow create: if (isLeader() || isManager()) && incoming().leaderId == request.auth.uid;
       allow update, delete: if isManager();
     }

@@ -136,6 +136,46 @@ function KPIItem({ label, value, subValue, icon, color, trend, trendType }: {
 
 const COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#10b981', '#8b5cf6', '#ec4899'];
 
+const getAvailabilityStyle = (value: number) => {
+  if (value >= 100) {
+    return {
+      textLight: "text-emerald-750 font-black",
+      textDark: "text-emerald-400 font-extrabold",
+      bgClass: "bg-emerald-50 text-emerald-800 border-emerald-200",
+      strokeLight: "stroke-emerald-500",
+      strokeDark: "stroke-emerald-400",
+      label: "Excelente"
+    };
+  } else if (value >= 85) {
+    return {
+      textLight: "text-orange-750 font-black",
+      textDark: "text-orange-400 font-extrabold",
+      bgClass: "bg-orange-50 text-orange-800 border-orange-200",
+      strokeLight: "stroke-orange-500",
+      strokeDark: "stroke-orange-400",
+      label: "Bom"
+    };
+  } else if (value >= 60) {
+    return {
+      textLight: "text-amber-750 font-black",
+      textDark: "text-amber-400 font-extrabold",
+      bgClass: "bg-amber-50 text-amber-850 border-amber-205",
+      strokeLight: "stroke-amber-500",
+      strokeDark: "stroke-amber-400",
+      label: "Abaixo"
+    };
+  } else {
+    return {
+      textLight: "text-red-750 font-black",
+      textDark: "text-red-400 font-extrabold",
+      bgClass: "bg-red-50 text-red-800 border-red-200",
+      strokeLight: "stroke-red-500",
+      strokeDark: "stroke-red-400",
+      label: "Crítico"
+    };
+  }
+};
+
 export function ManagerDashboard() {
   const { profile, loading: authLoading, setQuotaExceeded } = useAuth();
   const { forklifts, uniqueForklifts, activeStops, goals: operationGoals, refreshGlobalData } = useData();
@@ -428,7 +468,7 @@ export function ManagerDashboard() {
     const stoppedUnits = filteredActiveStops.filter(s => {
       const sev = s.severity || (s.type === 'preventive' ? 'low' : 'high');
       const isParada = sev === 'high' || sev === 'critical';
-      return isParada || !!s.startTime;
+      return isParada;
     }).length;
     
     // Fleet instant availability
@@ -450,7 +490,7 @@ export function ManagerDashboard() {
       const plannedHoursForMachine = 24 * totalPeriodDays;
       totalPlannedHours += plannedHoursForMachine;
 
-      // Find all stops for this specific machine in the period
+      // Find all stops for this specific machine in the period (strictly paradas: high or critical)
       const machineStops = maintenanceHistory.filter(h => {
         const matchesForklift = matchesForkliftFilter(h.forkliftId, f.id);
         const matchesOperator = filterOperator === 'all' || h.operatorId === filterOperator || (h.operatorIds && h.operatorIds.includes(filterOperator));
@@ -458,15 +498,9 @@ export function ManagerDashboard() {
 
         const sev = h.severity || (h.type === 'preventive' ? 'low' : 'high');
         const isParada = sev === 'high' || sev === 'critical';
+        if (!isParada) return false; // Ignorar "reparos" (low) ou "Falha" (medium)
         
-        let startMs: number;
-        if (isParada) {
-          startMs = parseDateSafe(h.stopTime).getTime();
-        } else {
-          if (!h.startTime) return false;
-          startMs = parseDateSafe(h.startTime).getTime();
-        }
-
+        const startMs = parseDateSafe(h.stopTime).getTime();
         const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
 
         return startMs < effectiveEndForPeriod && hEnd > start.getTime();
@@ -475,9 +509,7 @@ export function ManagerDashboard() {
       // Sum downtime of these stops
       let machineDowntimeMs = 0;
       machineStops.forEach(h => {
-        const sev = h.severity || (h.type === 'preventive' ? 'low' : 'high');
-        const isParada = sev === 'high' || sev === 'critical';
-        const startMs = isParada ? parseDateSafe(h.stopTime).getTime() : parseDateSafe(h.startTime!).getTime();
+        const startMs = parseDateSafe(h.stopTime).getTime();
         const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
         
         const effectiveStart = Math.max(start.getTime(), startMs);
@@ -492,8 +524,8 @@ export function ManagerDashboard() {
       // Calculate MTBF for this individual forklift (in hours)
       const forkliftOperatingHours = Math.max(0, plannedHoursForMachine - cappedDowntimeHours);
       const forkliftFailuresCount = machineStops.length;
-      // If no failures, MTBF is the progression time of the period
-      const forkliftMtbf = forkliftFailuresCount > 0 ? forkliftOperatingHours / forkliftFailuresCount : forkliftOperatingHours;
+      // If no failures, MTBF is 0
+      const forkliftMtbf = forkliftFailuresCount > 0 ? forkliftOperatingHours / forkliftFailuresCount : 0;
       totalForkliftMtbfHours += forkliftMtbf;
     });
 
@@ -501,20 +533,15 @@ export function ManagerDashboard() {
 
     // Calculate MTTR only for the chosen month's started/completed maintenance records
     // This matches standard MTTR calculation of the spreadsheet and avoids prior-month overlaps
-    const failuresCount = filteredHistory.length;
+    const filteredParadas = filteredHistory.filter(h => {
+      const sev = h.severity || (h.type === 'preventive' ? 'low' : 'high');
+      return sev === 'high' || sev === 'critical';
+    });
+    const failuresCount = filteredParadas.length;
 
     let totalRepairTimeMs = 0;
-    filteredHistory.forEach(h => {
-      const sev = h.severity || (h.type === 'preventive' ? 'low' : 'high');
-      const isParada = sev === 'high' || sev === 'critical';
-      let repairStart: number;
-      if (isParada) {
-        repairStart = parseDateSafe(h.stopTime).getTime();
-      } else {
-        if (!h.startTime) return;
-        repairStart = parseDateSafe(h.startTime).getTime();
-      }
-
+    filteredParadas.forEach(h => {
+      const repairStart = parseDateSafe(h.stopTime).getTime();
       const repairEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
       totalRepairTimeMs += Math.max(0, repairEnd - repairStart);
     });
@@ -574,20 +601,13 @@ export function ManagerDashboard() {
       
       const sev = h.severity || (h.type === 'preventive' ? 'low' : 'high');
       const isParada = sev === 'high' || sev === 'critical';
+      if (!isParada) return; // Only count registered stops (paradas)
       
-      let startMs: number | null = null;
-      if (isParada) {
-        startMs = parseDateSafe(h.stopTime).getTime();
-      } else if (h.startTime) {
-        startMs = parseDateSafe(h.startTime).getTime();
-      }
-
-      if (startMs !== null) {
-        if (!map[key]) map[key] = { count: 0, downtime: 0, name };
-        map[key].count += 1;
-        const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : Date.now();
-        map[key].downtime += Math.max(0, hEnd - startMs);
-      }
+      const startMs = parseDateSafe(h.stopTime).getTime();
+      if (!map[key]) map[key] = { count: 0, downtime: 0, name };
+      map[key].count += 1;
+      const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : Date.now();
+      map[key].downtime += Math.max(0, hEnd - startMs);
     });
     return Object.values(map).sort((a, b) => b.count - a.count).slice(0, 5);
   }, [filteredHistory, forklifts]);
@@ -1668,20 +1688,512 @@ export function ManagerDashboard() {
 
          return (
           <div className="space-y-10 animate-in fade-in duration-500 font-sans">
-            {/* Seção 1: Indicadores do Período Selecionado */}
-            <div id="section-period-indicators" className="space-y-4">
-              <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
-                <span className="w-1.5 h-4 bg-blue-600 rounded-full" />
-                <h3 className="text-xs font-black uppercase text-slate-400 tracking-wider">
-                  Métricas & Indicadores do Período Selecionado (Afetados por Filtros)
-                </h3>
+            {/* Seção Única: Painel de Máquinas Ativas da Frota */}
+            <div id="section-period-indicators" className="space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                <div className="flex items-center gap-2">
+                  <span className="w-1.5 h-4 bg-blue-600 rounded-full" />
+                  <h3 className="text-sm font-black uppercase text-slate-400 tracking-wider">
+                    Fichas Técnicas das Máquinas Ativas (Período Selecionado)
+                  </h3>
+                </div>
+                <div className="flex gap-2">
+                  <span className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider">
+                    {(() => {
+                      const list = filterForklift === 'all' 
+                        ? uniqueForklifts 
+                        : uniqueForklifts.filter(f => f.id === filterForklift || (f.serialNumber && filterForklift && f.serialNumber.trim().toLowerCase() === filterForklift.trim().toLowerCase()));
+                      return list.length;
+                    })()} Máquinas Cadastradas
+                  </span>
+                  <span className="bg-emerald-55/15 text-emerald-800 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider">
+                    Taxa Global: {kpis.monthlyAvailability.toFixed(1)}% Disp.
+                  </span>
+                </div>
               </div>
 
-              <div id="dashboard-period-metrics-grid" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div id="active-machines-cards-grid" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+                {/* Card Principal (Geral / Frota Consolidados) */}
+                {(() => {
+                  const activeStoppedCount = uniqueForklifts.filter(fork => {
+                    const activeStop = activeStops.find(s => s.forkliftId === fork.id && s.status !== 'completed');
+                    if (!activeStop) return false;
+                    const sev = activeStop.severity || (activeStop.type === 'preventive' ? 'low' : 'high');
+                    return sev === 'high' || sev === 'critical';
+                  }).length;
+
+                  const totalStopsInPeriod = maintenanceHistory.filter(h => {
+                    const sev = h.severity || (h.type === 'preventive' ? 'low' : 'high');
+                    const isParada = sev === 'high' || sev === 'critical';
+                    if (!isParada) return false;
+
+                    const startMs = parseDateSafe(h.stopTime).getTime();
+                    const start = parseDateSafe(startDate);
+                    const end = parseDateSafe(endDate);
+                    const now = new Date();
+                    const effectiveEndForPeriod = Math.min(end.getTime(), now.getTime());
+                    const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
+                    return startMs < effectiveEndForPeriod && hEnd > start.getTime();
+                  }).length;
+
+                  // Get computed style for fleet general availability
+                  const fleetAvState = getAvailabilityStyle(kpis.monthlyAvailability);
+
+                  return (
+                    <div 
+                      id="main-general-overview-card"
+                      className="bg-slate-900 border border-slate-950 rounded-[2rem] text-slate-100 p-6 flex flex-col justify-between hover:shadow-md transition-all relative overflow-hidden group shadow-lg min-h-[360px]"
+                    >
+                      {/* Top Accent Blue/Indigo Bar */}
+                      <div className="absolute top-0 left-0 right-0 h-1.5 bg-blue-600" />
+                      
+                      <div className="space-y-4 font-sans text-left">
+                        <div>
+                          <span className="text-[10px] font-black uppercase tracking-widest text-[#60a5fa]">Geral</span>
+                          <h4 className="text-xl font-black text-white tracking-tight">
+                            Painel Geral da Frota
+                          </h4>
+                          <p className="text-xs text-slate-400 font-bold shrink-0">
+                            Indicadores unificados da operação
+                          </p>
+                        </div>
+
+                        {/* Rosca / Donut Chart representation for fleet general availability */}
+                        <div className="flex items-center gap-4 bg-slate-800/40 p-4 rounded-2xl border border-slate-800">
+                          <div className="relative w-16 h-16 shrink-0 flex items-center justify-center">
+                            <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
+                              <circle
+                                cx="18"
+                                cy="18"
+                                r="15.915"
+                                fill="transparent"
+                                className="stroke-slate-800"
+                                strokeWidth="3.5"
+                              />
+                              <circle
+                                cx="18"
+                                cy="18"
+                                r="15.915"
+                                fill="transparent"
+                                className={cn(
+                                  "transition-all duration-500",
+                                  fleetAvState.strokeDark
+                                )}
+                                strokeWidth="3.5"
+                                strokeDasharray={`${kpis.monthlyAvailability} ${100 - kpis.monthlyAvailability}`}
+                                strokeDashoffset="0"
+                                strokeLinecap="round"
+                              />
+                            </svg>
+                            <span className={cn(
+                              "absolute text-[11px] font-black",
+                              fleetAvState.textDark
+                            )}>
+                              {kpis.monthlyAvailability.toFixed(1)}%
+                            </span>
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Disponibilidade Geral</span>
+                            <span className={cn(
+                              "text-sm font-black block tracking-tight truncate",
+                              fleetAvState.textDark
+                            )}>
+                              {fleetAvState.label}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* General KPIs Grid */}
+                        <div className="grid grid-cols-2 gap-2 text-center text-xs">
+                          <div className="bg-slate-800/25 p-2 rounded-xl border border-slate-800/60">
+                            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">MTBF Frota</p>
+                            <p className="text-[11px] font-black text-slate-100 font-mono mt-0.5">
+                              {kpis.mtbf > 0 ? `${(kpis.mtbf / 24).toFixed(1)}d` : "---"}
+                            </p>
+                          </div>
+                          <div className="bg-slate-800/25 p-2 rounded-xl border border-slate-800/60">
+                            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">MTTR Frota</p>
+                            <p className="text-[11px] font-black text-slate-100 font-mono mt-0.5">
+                              {kpis.mttr > 0 ? formatDuration(kpis.mttr) : "---"}
+                            </p>
+                          </div>
+                          <div className="bg-slate-800/25 p-2 rounded-xl border border-slate-800/60">
+                            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Paradas Geral</p>
+                            <p className="text-[11px] font-black text-slate-100 font-mono mt-0.5">
+                              {totalStopsInPeriod}
+                            </p>
+                          </div>
+                          <div className="bg-slate-800/25 p-2 rounded-xl border border-slate-800/60">
+                            <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Unid. Paradas</p>
+                            <p className={cn(
+                              "text-[11px] font-black font-mono mt-0.5",
+                              activeStoppedCount > 0 ? "text-rose-455 font-bold animate-pulse" : "text-emerald-400"
+                            )}>
+                              {activeStoppedCount}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Card Footer Info */}
+                      <div className="flex justify-between items-center text-[10px] text-slate-500 font-bold border-t border-slate-800/60 pt-2.5 mt-4 shrink-0">
+                        <span>Todos os equipamentos</span>
+                        <span className="text-blue-400 uppercase tracking-widest font-black text-[9px]">FROTA SCA</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {(() => {
+                  const list = filterForklift === 'all' 
+                    ? uniqueForklifts 
+                    : uniqueForklifts.filter(f => f.id === filterForklift || (f.serialNumber && filterForklift && f.serialNumber.trim().toLowerCase() === filterForklift.trim().toLowerCase()));
+                  
+                  return list.map(f => {
+                    // 1. Calculate specific hours in period
+                    const start = parseDateSafe(startDate);
+                    const end = parseDateSafe(endDate);
+                    const now = new Date();
+                    const effectiveEndForPeriod = Math.min(end.getTime(), now.getTime());
+                    const totalPeriodDays = Math.max(1, (effectiveEndForPeriod - start.getTime()) / (1000 * 60 * 60 * 24));
+                    const plannedHours = 24 * totalPeriodDays;
+                    // 2. Filter stops for this machine using a super robust forklift match and including medium/high/critical severities
+                    const machineStops = maintenanceHistory.filter(h => {
+                      const matchesForklift = (() => {
+                        if (!h.forkliftId) return false;
+                        const cleanHId = h.forkliftId.trim().toLowerCase();
+                        const cleanFId = f.id.trim().toLowerCase();
+                        const cleanFSerial = f.serialNumber ? f.serialNumber.trim().toLowerCase() : '';
+                        
+                        if (cleanHId === cleanFId) return true;
+                        if (cleanFSerial && cleanHId === cleanFSerial) return true;
+                        
+                        const matchedFork = forklifts.find(fork => 
+                          fork.id === h.forkliftId || 
+                          (fork.serialNumber && fork.serialNumber.trim().toLowerCase() === cleanHId)
+                        );
+                        if (matchedFork) {
+                          const matchedSerial = (matchedFork.serialNumber || '').trim().toLowerCase();
+                          if (matchedSerial && cleanFSerial && matchedSerial === cleanFSerial) {
+                            return true;
+                          }
+                          if (matchedFork.id === f.id) {
+                            return true;
+                          }
+                        }
+                        return false;
+                      })();
+
+                      const matchesOperator = filterOperator === 'all' || h.operatorId === filterOperator || (h.operatorIds && h.operatorIds.includes(filterOperator));
+                      if (!matchesForklift || !matchesOperator) return false;
+
+                      const sev = h.severity || (h.type === 'preventive' ? 'low' : 'high');
+                      const isParada = sev === 'high' || sev === 'critical';
+                      if (!isParada) return false;
+                      
+                      const startMs = parseDateSafe(h.stopTime).getTime();
+                      const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
+                      return startMs < effectiveEndForPeriod && hEnd > start.getTime();
+                    });
+
+                    // 3. Count parts consumed
+                    const partsConsumedCount = machineStops.reduce((sum, h) => sum + (h.parts?.reduce((s, p) => s + p.quantity, 0) || 0), 0);
+
+                    // 4. Sum downtime
+                    let machineDowntimeMs = 0;
+                    machineStops.forEach(h => {
+                      const startMs = parseDateSafe(h.stopTime).getTime();
+                      const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
+                      
+                      const effectiveStart = Math.max(start.getTime(), startMs);
+                      const effectiveEnd = Math.min(effectiveEndForPeriod, hEnd);
+                      machineDowntimeMs += Math.max(0, effectiveEnd - effectiveStart);
+                    });
+
+                    const downtimeHours = machineDowntimeMs / (1000 * 60 * 60);
+                    const availability = plannedHours > 0 
+                      ? Math.max(0, Math.min(100, ((plannedHours - downtimeHours) / plannedHours) * 100))
+                      : 100;
+
+                    // 5. Calculate MTBF & MTTR
+                    const failuresCount = machineStops.filter(h => h.type !== 'preventive').length;
+                    const operatingHours = Math.max(0, plannedHours - downtimeHours);
+                    const mtbf = failuresCount > 0 ? operatingHours / failuresCount : 0;
+
+                    let totalRepairTimeMs = 0;
+                    const stopsWithRepairTime = machineStops.filter(h => h.status === 'completed' || h.endTime);
+                    stopsWithRepairTime.forEach(h => {
+                      const repairStart = parseDateSafe(h.stopTime).getTime();
+                      const repairEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
+                      totalRepairTimeMs += Math.max(0, repairEnd - repairStart);
+                    });
+                    const mttr = stopsWithRepairTime.length > 0 ? totalRepairTimeMs / stopsWithRepairTime.length : 0;
+
+                    // 7. Active stop state - strictly critical, high or medium
+                    const activeStop = activeStops.find(s => {
+                      if (s.status === 'completed') return false;
+                      
+                      // Match forklift Robustly
+                      const matchesForklift = (() => {
+                        if (!s.forkliftId) return false;
+                        const cleanSId = s.forkliftId.trim().toLowerCase();
+                        const cleanFId = f.id.trim().toLowerCase();
+                        const cleanFSerial = f.serialNumber ? f.serialNumber.trim().toLowerCase() : '';
+                        
+                        if (cleanSId === cleanFId) return true;
+                        if (cleanFSerial && cleanSId === cleanFSerial) return true;
+                        
+                        const matchedFork = forklifts.find(fork => 
+                          fork.id === s.forkliftId || 
+                          (fork.serialNumber && fork.serialNumber.trim().toLowerCase() === cleanSId)
+                        );
+                        if (matchedFork) {
+                          const matchedSerial = (matchedFork.serialNumber || '').trim().toLowerCase();
+                          if (matchedSerial && cleanFSerial && matchedSerial === cleanFSerial) {
+                            return true;
+                          }
+                          if (matchedFork.id === f.id) {
+                            return true;
+                          }
+                        }
+                        return false;
+                      })();
+                      
+                      if (!matchesForklift) return false;
+                      const sev = s.severity || (s.type === 'preventive' ? 'low' : 'high');
+                      return sev === 'high' || sev === 'critical';
+                    });
+
+                    // 8. Recent events for this machine (strictly paradas)
+                    const machineEvents = maintenanceHistory
+                      .filter(h => {
+                        const matchesForklift = (() => {
+                          if (!h.forkliftId) return false;
+                          const cleanHId = h.forkliftId.trim().toLowerCase();
+                          const cleanFId = f.id.trim().toLowerCase();
+                          const cleanFSerial = f.serialNumber ? f.serialNumber.trim().toLowerCase() : '';
+                          
+                          if (cleanHId === cleanFId) return true;
+                          if (cleanFSerial && cleanHId === cleanFSerial) return true;
+                          
+                          const matchedFork = forklifts.find(fork => 
+                            fork.id === h.forkliftId || 
+                            (fork.serialNumber && fork.serialNumber.trim().toLowerCase() === cleanHId)
+                          );
+                          if (matchedFork) {
+                            const matchedSerial = (matchedFork.serialNumber || '').trim().toLowerCase();
+                            if (matchedSerial && cleanFSerial && matchedSerial === cleanFSerial) {
+                              return true;
+                            }
+                            if (matchedFork.id === f.id) {
+                              return true;
+                            }
+                          }
+                          return false;
+                        })();
+                        
+                        if (!matchesForklift) return false;
+                        const sev = h.severity || (h.type === 'preventive' ? 'low' : 'high');
+                        return sev === 'high' || sev === 'critical';
+                      })
+                      .sort((a, b) => parseDateSafe(b.stopTime || b.startTime).getTime() - parseDateSafe(a.stopTime || a.startTime).getTime())
+                      .slice(0, 3);
+
+                    // Get computed availability style
+                    const avStyle = getAvailabilityStyle(availability);
+
+                    return (
+                      <div 
+                        key={f.id} 
+                        className={cn(
+                          "bg-white rounded-[2rem] border transition-all group overflow-hidden relative flex flex-col justify-between shadow-md hover:shadow-lg",
+                          activeStop ? "border-red-300 bg-red-50/5" : "border-slate-350 hover:border-blue-400"
+                        )}
+                      >
+                        {/* Top Background Border: red if machine is stopped (Parada), otherwise green */}
+                        <div className={cn(
+                          "absolute top-0 left-0 right-0 h-1.5 transition-colors",
+                          activeStop ? "bg-red-500" : "bg-emerald-500"
+                        )} />
+
+                        <div className="space-y-4 font-sans text-left p-6">
+                          {/* Title and Badge */}
+                          <div className="flex justify-between items-start gap-2">
+                            <div className="min-w-0">
+                              <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">Número da Frota</span>
+                              <h4 className="text-xl font-extrabold text-slate-950 tracking-tight font-mono leading-none mt-1">
+                                Série {f.serialNumber || 'N/A'}
+                              </h4>
+                              {f.model && f.model.toLowerCase() !== 'mx25' && (
+                                <p className="text-xs font-black text-slate-500 mt-1 uppercase" title={`ID: ${f.id}`}>
+                                  Modelo: {f.model}
+                                </p>
+                              )}
+                            </div>
+
+                            {/* Status Badge */}
+                            <div className="flex flex-col items-end gap-1 shrink-0">
+                              {activeStop ? (
+                                <span className={cn(
+                                  "text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider flex items-center gap-1.5 animate-pulse",
+                                  activeStop.status === 'awaiting_parts' ? "bg-amber-100 text-amber-900 border border-amber-300" :
+                                  activeStop.status === 'in_progress' ? "bg-blue-100 text-blue-905 border border-blue-300" : "bg-red-100 text-red-905 border border-red-300"
+                                )}>
+                                  <span className={cn(
+                                    "w-1.5 h-1.5 rounded-full/50 w-2 h-2 rounded-full",
+                                    activeStop.status === 'awaiting_parts' ? "bg-amber-500" :
+                                    activeStop.status === 'in_progress' ? "bg-blue-500" : "bg-red-500"
+                                  )} />
+                                  {activeStop.status === 'awaiting_parts' ? "Aguardando Peças" :
+                                   activeStop.status === 'in_progress' ? "Em Manutenção" : "Parada Ativa"}
+                                </span>
+                              ) : (
+                                <span className="text-[9px] font-black px-2.5 py-1 bg-emerald-5 border border-emerald-300 text-emerald-800 rounded-full uppercase tracking-wider flex items-center gap-1.5 font-sans">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                  Disponível
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Rosca / Donut Chart representation for forklift availability */}
+                          <div className="flex items-center gap-4 bg-slate-100/90 p-3.5 rounded-2xl border border-slate-200">
+                            <div className="relative w-16 h-16 shrink-0 flex items-center justify-center">
+                              <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
+                                <circle
+                                  cx="18"
+                                  cy="18"
+                                  r="15.915"
+                                  fill="transparent"
+                                  className="stroke-slate-300"
+                                  strokeWidth="3.5"
+                                />
+                                <circle
+                                  cx="18"
+                                  cy="18"
+                                  r="15.915"
+                                  fill="transparent"
+                                  className={cn(
+                                    "transition-all duration-500",
+                                    avStyle.strokeLight
+                                  )}
+                                  strokeWidth="3.5"
+                                  strokeDasharray={`${availability} ${100 - availability}`}
+                                  strokeDashoffset="0"
+                                  strokeLinecap="round"
+                                />
+                              </svg>
+                              <span className={cn(
+                                "absolute text-[11px] font-bold",
+                                avStyle.textLight
+                              )}>
+                                {availability.toFixed(0)}%
+                              </span>
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Disponibilidade</span>
+                              <span className={cn(
+                                "text-sm font-black block tracking-tight truncate",
+                                avStyle.textLight
+                              )}>
+                                {avStyle.label}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Days of Total Unavailability for Stoppages */}
+                          {downtimeHours > 0 && (
+                            <div className={cn(
+                              "p-3 rounded-2xl border text-left mt-2 space-y-1 shadow-sm",
+                              activeStop ? "bg-red-50/70 border-red-200" : "bg-slate-50 border-slate-200"
+                            )}>
+                              <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 block">Indisponibilidade Acumulada</span>
+                              <div className="flex items-baseline gap-1.5">
+                                <span className={cn(
+                                  "text-lg font-black font-sans leading-none",
+                                  activeStop ? "text-red-750" : "text-slate-900"
+                                )}>
+                                  {(downtimeHours / 24).toFixed(1)} dias
+                                </span>
+                                <span className="text-xs font-bold text-slate-600">({downtimeHours.toFixed(1)} horas)</span>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Core KPIs of current filtered period */}
+                          <div className="space-y-3">
+                            <div className="grid grid-cols-3 gap-2 text-center pt-1">
+                              <div className="bg-slate-105/90 p-2.5 rounded-xl border border-slate-250 text-slate-950">
+                                <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest">MTBF</p>
+                                <p className="text-xs font-black text-slate-950 font-mono mt-0.5">
+                                  {mtbf > 0 ? `${(mtbf / 24).toFixed(1)}d` : "---"}
+                                </p>
+                              </div>
+                              <div className="bg-slate-105/90 p-2.5 rounded-xl border border-slate-250 text-slate-950">
+                                <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest">MTTR</p>
+                                <p className="text-xs font-black text-slate-950 font-mono mt-0.5">
+                                  {mttr > 0 ? formatDuration(mttr) : "---"}
+                                </p>
+                              </div>
+                              <div className="bg-slate-105/90 p-2.5 rounded-xl border border-slate-250 text-slate-950">
+                                <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Paradas</p>
+                                <p className="text-xs font-black text-slate-950 font-mono mt-0.5 font-sans">
+                                  {machineStops.length}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Recent Stops Timeline for this Machine */}
+                          <div className="space-y-2 pt-2 border-t border-slate-200">
+                            <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest block font-sans">
+                              Últimas Paradas ({machineEvents.length})
+                            </span>
+                            {machineEvents.length === 0 ? (
+                              <p className="text-[11px] text-slate-500 font-bold italic">Sem ocorrências registradas.</p>
+                            ) : (
+                              <div className="space-y-1.5 font-sans">
+                                {machineEvents.map(event => {
+                                  const date = parseDateSafe(event.stopTime || event.startTime);
+                                  const isCompleted = event.status === 'completed';
+                                  return (
+                                    <div key={event.id} className="text-[11px] flex items-start gap-1.5 p-1.5 bg-slate-50 rounded-xl hover:bg-slate-100/60 border border-slate-100 transition-colors font-sans">
+                                      <span className={cn(
+                                        "w-1.5 h-1.5 rounded-full mt-1.5 shrink-0",
+                                        isCompleted ? "bg-emerald-500" : "bg-red-500 animate-pulse"
+                                      )} />
+                                      <div className="min-w-0 flex-1 font-sans">
+                                        <div className="flex items-center justify-between text-[10px] text-slate-500 font-bold font-sans">
+                                          <span>{formatDate(date)}</span>
+                                          <span className="capitalize text-[8px] font-black text-indigo-700">{event.type}</span>
+                                        </div>
+                                        <p className="text-slate-900 font-black truncate pr-1 text-left text-xs mt-0.5" title={event.description}>
+                                          {event.description || "Sem descrição"}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Card Footer Info */}
+                        <div className="flex justify-between items-center text-[10px] text-slate-600 font-bold border-t border-slate-205 bg-slate-50 px-6 py-3 shrink-0 font-sans">
+                          <span>Peças trocadas: <strong className="text-slate-950">{partsConsumedCount} un</strong></span>
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+
+              <div id="dashboard-period-metrics-grid" className="hidden">
                 {/* Card 1: Disponibilidade do Período */}
                 <div id="metric-card-availability" className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
                   <div>
-                    <div className="flex justify-between items-center">
+                    <div className="flex justify-between items-center font-sans">
                       <div className="flex items-center gap-2">
                         <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">
                           <Activity className="w-4 h-4" />
@@ -2078,7 +2590,7 @@ export function ManagerDashboard() {
               </div>
 
               {/* Seção de Análise e Detalhamento de Filtros - Gráficos de Motivos e Peças */}
-              <div id="dashboard-filtered-charts" className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-6">
+              <div id="dashboard-filtered-charts" className="hidden">
                 
                 {/* Section B: Principais Motivos de Parada */}
                 <div id="section-reasons-distribution" className="bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-200/80 shadow-sm space-y-6">
@@ -2426,7 +2938,347 @@ export function ManagerDashboard() {
               </div>
             </div>
 
+            {/* Seção 3: Indisponibilidade de Mecânicos & Gestão de Escala */}
+            {(profile?.role === 'manager' || profile?.role === 'leader') && (
+              <div id="section-mechanic-unavailability" className="space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                <div className="flex items-center gap-2">
+                  <span className="w-1.5 h-4 bg-blue-600 rounded-full" />
+                  <h3 className="text-sm font-black uppercase text-slate-400 tracking-wider">
+                    Indisponibilidade do Mecânico & Gestão de Escala
+                  </h3>
+                </div>
+              </div>
 
+              {/* Grid de Indicadores de Indisponibilidade */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                
+                {/* Indicador 1: Mecânicos de Plantão Hoje */}
+                <div id="indicador-mecanicos-hoje" className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col justify-between hover:border-slate-300 transition-colors">
+                  <div className="flex justify-between items-start">
+                    <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl">
+                      <UserCheck className="w-5 h-5" />
+                    </div>
+                    {(() => {
+                      const todayStr = getLocalDateString();
+                      const mechs = users.filter(u => u.role === 'mechanic');
+                      const absentCount = absences.filter(a => a.role === 'mechanic' && todayStr >= a.startDate && todayStr <= a.endDate).length;
+                      const activeCount = mechs.length - absentCount;
+                      const ratio = mechs.length > 0 ? activeCount / mechs.length : 1;
+                      
+                      return (
+                        <span className={cn(
+                          "text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider border",
+                          ratio >= 0.5 ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-rose-50 text-rose-700 border-rose-200"
+                        )}>
+                          {mechs.length === 0 ? "Sem Mecânicos" : ratio >= 0.5 ? "Equipe Ativa" : "Equipe Defasada"}
+                        </span>
+                      );
+                    })()}
+                  </div>
+                  <div className="mt-4 text-left">
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Mecânicos Presentes Hoje</span>
+                    <div className="flex items-baseline gap-1.5 mt-1">
+                      {(() => {
+                        const todayStr = getLocalDateString();
+                        const mechs = users.filter(u => u.role === 'mechanic');
+                        const absentCount = absences.filter(a => a.role === 'mechanic' && todayStr >= a.startDate && todayStr <= a.endDate).length;
+                        const activeCount = mechs.length - absentCount;
+                        return (
+                          <>
+                            <span className="text-4xl font-extrabold text-slate-900 tracking-tight">
+                              {activeCount}
+                            </span>
+                            <span className="text-sm font-bold text-slate-400">
+                              de {mechs.length} ativos
+                            </span>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Indicador 2: Taxa de Disponibilidade Mensal */}
+                <div id="indicador-mecanicos-taxa" className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col justify-between hover:border-slate-300 transition-colors">
+                  <div className="flex justify-between items-start">
+                    <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl">
+                      <Activity className="w-5 h-5" />
+                    </div>
+                    <span className={cn(
+                      "text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider border",
+                      mechanicAvailabilityMetrics.availablePercentage >= 85 ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"
+                    )}>
+                      {mechanicAvailabilityMetrics.availablePercentage >= 85 ? "Meta Batida" : "Abaixo da Meta"}
+                    </span>
+                  </div>
+                  <div className="mt-4 text-left">
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Disponibilidade Geral Mês</span>
+                    <div className="flex items-baseline gap-1.5 mt-1">
+                      <span className="text-4xl font-extrabold text-indigo-600 tracking-tight">
+                        {Number(mechanicAvailabilityMetrics.availablePercentage).toFixed(1)}%
+                      </span>
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">
+                        da escala do mês
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Indicador 3: Acumulado de Ausências */}
+                <div id="indicador-mecanicos-acumulado" className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col justify-between hover:border-slate-300 transition-colors">
+                  <div className="flex justify-between items-start">
+                    <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl">
+                      <Calendar className="w-5 h-5" />
+                    </div>
+                    <span className="text-[9px] font-black bg-slate-50 text-slate-700 px-2.5 py-1 rounded-full uppercase tracking-wider border border-slate-200">
+                      Histórico
+                    </span>
+                  </div>
+                  <div className="mt-4 text-left">
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Total de Perdas Homem-Dia</span>
+                    <div className="flex items-baseline gap-1.5 mt-1">
+                      <span className="text-4xl font-extrabold text-amber-700 tracking-tight font-sans">
+                        {mechanicAvailabilityMetrics.totalAbsentDays}
+                      </span>
+                      <span className="text-sm font-bold text-slate-400">
+                        dias de {mechanicAvailabilityMetrics.totalCapacityDays} totais
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Indicador 4: Gargalo / Impacto na Frota */}
+                <div id="indicador-mecanicos-gargalo" className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col justify-between hover:border-slate-300 transition-colors">
+                  <div className="flex justify-between items-start">
+                    <div className="p-3 bg-rose-50 text-rose-600 rounded-2xl">
+                      <ShieldAlert className="w-5 h-5" />
+                    </div>
+                    <span className={cn(
+                      "text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider border",
+                      mechanicAvailabilityMetrics.absentDaysWithPendings > 0 ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-emerald-50 border border-emerald-200 text-emerald-700"
+                    )}>
+                      {mechanicAvailabilityMetrics.absentDaysWithPendings > 0 ? "Risco Alto" : "Sem Risco"}
+                    </span>
+                  </div>
+                  <div className="mt-4 text-left">
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Ausências c/ Máquinas Paradas</span>
+                    <div className="flex items-baseline gap-1.5 mt-1">
+                      <span className="text-4xl font-extrabold text-rose-600 tracking-tight font-sans">
+                        {mechanicAvailabilityMetrics.absentDaysWithPendings}
+                      </span>
+                      <span className="text-sm font-bold text-slate-400">
+                        dias de gargalo crítico
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Seção Split: Cadastro de Indisponibilidade & Tabela de Registros ativos/futuros */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                
+                {/* Formulário de Cadastro (5 colunas) */}
+                <div id="card-add-indisponibilidade" className="lg:col-span-5 bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Plus className="w-5 h-5 text-blue-600" />
+                      <h4 className="text-sm font-black text-slate-900 uppercase tracking-widest">
+                        Registrar Indisponibilidade
+                      </h4>
+                    </div>
+
+                    <form onSubmit={handleAddAbsence} className="space-y-4">
+                      <div className="space-y-1 text-left">
+                        <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Mecânico</label>
+                        <select
+                          value={selectedMechanicId}
+                          onChange={(e) => setSelectedMechanicId(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500/20"
+                        >
+                          <option value="">Selecione o mecânico...</option>
+                          {users.filter(u => u.role === 'mechanic').map(m => (
+                            <option key={m.uid} value={m.uid}>{m.displayName || m.email}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1 text-left">
+                          <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Data de Início</label>
+                          <input
+                            type="date"
+                            value={absenceStartDate}
+                            onChange={(e) => setAbsenceStartDate(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500/20"
+                          />
+                        </div>
+                        <div className="space-y-1 text-left">
+                          <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Data de Término</label>
+                          <input
+                            type="date"
+                            value={absenceEndDate}
+                            onChange={(e) => setAbsenceEndDate(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500/20"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1 text-left">
+                          <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Motivo</label>
+                          <select
+                            value={absenceReason}
+                            onChange={(e) => setAbsenceReason(e.target.value as AbsenceReason)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500/20"
+                          >
+                            {Object.entries(AbsenceReason).map(([key, label]) => (
+                              <option key={key} value={label}>{label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-1 text-left">
+                          <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Setor</label>
+                          {(() => {
+                            const mech = users.find(u => u.uid === selectedMechanicId);
+                            return (
+                              <input
+                                type="text"
+                                readOnly
+                                value={mech?.sector || 'Oficina Geral'}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-semibold text-slate-500 outline-none cursor-not-allowed"
+                              />
+                            );
+                          })()}
+                        </div>
+                      </div>
+
+                      <div className="space-y-1 text-left">
+                        <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Observações / Detalhes</label>
+                        <textarea
+                          placeholder="Motivo detalhado ou anotação da escala..."
+                          value={absenceNotes}
+                          onChange={(e) => setAbsenceNotes(e.target.value)}
+                          rows={2}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500/20 resize-none"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isLoggingAbsence || !selectedMechanicId}
+                        className={cn(
+                          "w-full py-3.5 rounded-2xl text-white font-extrabold uppercase text-xs tracking-widest transition-all cursor-pointer shadow-md select-none",
+                          isLoggingAbsence || !selectedMechanicId
+                            ? "bg-slate-200 text-slate-400 cursor-not-allowed shadow-none"
+                            : "bg-blue-600 hover:bg-blue-700 active:scale-95 shadow-blue-100"
+                        )}
+                      >
+                        {isLoggingAbsence ? "Salvando..." : "Registrar Indisponibilidade"}
+                      </button>
+                    </form>
+                  </div>
+                </div>
+
+                {/* Tabela de Indisponibilidades Ativas & Históricas (7 colunas) */}
+                <div id="card-lista-indisponibilidades" className="lg:col-span-7 bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex flex-col justify-between">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Wrench className="w-5 h-5 text-indigo-500" />
+                        <h4 className="text-sm font-black text-slate-900 uppercase tracking-widest">
+                          Afastamentos & Ausências no Período
+                        </h4>
+                      </div>
+                      <span className="bg-slate-50 text-slate-500 border border-slate-200 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider">
+                        {absences.filter(a => a.role === 'mechanic').length} registros
+                      </span>
+                    </div>
+
+                    <div className="bg-slate-50/50 rounded-2xl border border-slate-150 overflow-hidden">
+                      <div className="max-h-[340px] overflow-y-auto">
+                        <table className="w-full text-left border-collapse font-sans">
+                          <thead>
+                            <tr className="bg-slate-100/80 border-b border-slate-150 text-[9px] text-slate-500 font-extrabold uppercase tracking-widest font-sans">
+                              <th className="p-3">Mecânico</th>
+                              <th className="p-3">Motivo</th>
+                              <th className="p-3">Período</th>
+                              <th className="p-3 text-right">Ação</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 text-xs text-left">
+                            {absences.filter(a => a.role === 'mechanic')
+                              .sort((a, b) => b.startDate.localeCompare(a.startDate))
+                              .map(abs => {
+                                const isCurrent = (() => {
+                                  const todayStr = getLocalDateString();
+                                  return todayStr >= abs.startDate && todayStr <= abs.endDate;
+                                })();
+                                return (
+                                  <tr key={abs.id} className="hover:bg-white transition-colors font-sans">
+                                    <td className="p-3 font-bold text-slate-900 font-sans">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="font-extrabold text-sm">{abs.operatorName}</span>
+                                        {isCurrent && (
+                                          <span className="bg-red-50 text-red-700 text-[8px] font-black border border-red-200 px-1.5 py-0.5 rounded uppercase tracking-wider animate-pulse flex items-center gap-0.5">
+                                            Ausente Hoje
+                                          </span>
+                                        )}
+                                      </div>
+                                      {abs.notes && (
+                                        <p className="text-[10px] text-slate-400 font-medium normal-case mt-0.5 italic max-w-xs truncate" title={abs.notes}>
+                                          “{abs.notes}”
+                                        </p>
+                                      )}
+                                    </td>
+                                    <td className="p-3">
+                                      <span className={cn(
+                                        "text-[9px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider border",
+                                        abs.reason === AbsenceReason.MEDICAL ? "bg-red-50 text-red-650 border-red-200" :
+                                        abs.reason === AbsenceReason.VACATION ? "bg-indigo-50 text-indigo-700 border-indigo-200" :
+                                        abs.reason === AbsenceReason.DAY_OFF ? "bg-amber-50 text-amber-700 border-amber-200" :
+                                        "bg-slate-100 text-slate-600 border-slate-200"
+                                      )}>
+                                        {abs.reason}
+                                      </span>
+                                    </td>
+                                    <td className="p-3 text-slate-500 font-semibold text-[11px] whitespace-nowrap">
+                                      {abs.startDate === abs.endDate 
+                                        ? abs.startDate 
+                                        : `${abs.startDate} a ${abs.endDate}`
+                                      }
+                                    </td>
+                                    <td className="p-3 text-right">
+                                      <button
+                                        onClick={() => handleDeleteAbsence(abs.id!)}
+                                        className="p-2 text-rose-500 hover:text-rose-750 hover:bg-rose-50 rounded-xl transition-all cursor-pointer"
+                                        title="Remover Registro"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            
+                            {absences.filter(a => a.role === 'mechanic').length === 0 && (
+                              <tr>
+                                <td colSpan={4} className="p-10 text-center text-slate-400 font-semibold italic">
+                                  Tudo limpo! Nenhum afastamento ou indisponibilidade registrado para os mecânicos no período.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+            )}
 
             {/* Debug panel specifically designed to transparently audit database records live inside the container preview */}
             <div className="mt-8 mx-auto max-w-7xl px-4 py-6 bg-slate-900 border border-slate-800 rounded-3xl text-slate-100 select-text overflow-hidden font-mono text-xs">

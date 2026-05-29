@@ -240,12 +240,14 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
       { id: 'history', label: 'Histórico Mensal', description: 'Todos os eventos registrados', icon: History, color: 'bg-slate-600' },
     ],
     operator: [
+      { id: 'dashboard', label: 'Dashboard', description: 'Ver indicadores de performance', icon: LayoutDashboard, color: 'bg-blue-500' },
       { id: 'checklist', label: 'Check-list Diário', description: 'Realizar inspeção da máquina', icon: ClipboardCheck, color: 'bg-cyan-500' },
       { id: 'op-register', label: 'Registrar Ocorrência', description: 'Reportar problema em máquina', icon: PlusCircle, color: 'bg-red-500' },
       { id: 'op-active', label: 'Ocorrências Registradas', description: 'Ver frota e eventos em tempo real', icon: AlertTriangle, color: 'bg-amber-500' },
       { id: 'history', label: 'Meu Histórico', description: 'Suas paradas registradas', icon: History, color: 'bg-slate-600' },
     ],
     mechanic: [
+      { id: 'dashboard', label: 'Dashboard', description: 'Ver indicadores de performance', icon: LayoutDashboard, color: 'bg-blue-500' },
       { id: 'mech-orders', label: 'Iniciar/Finalizar Manutenção', description: 'Trabalhar em ordens abertas', icon: Wrench, color: 'bg-indigo-500' },
       { id: 'mech-preventive', label: 'Manutenção Preventiva', description: 'Ver revisões programadas', icon: ClipboardList, color: 'bg-emerald-500' },
       { id: 'parts-inventory', label: 'Estoque de Peças', description: 'Consultar e ajustar estoque', icon: Package, color: 'bg-orange-500' },
