@@ -189,7 +189,7 @@ export function ManagerDashboard() {
   const [hasMoreEvents, setHasMoreEvents] = useState(true);
   
   const [filterYear, setFilterYear] = useState<string>(new Date().getFullYear().toString());
-  const [filterMonth, setFilterMonth] = useState<string>('all');
+  const [filterMonth, setFilterMonth] = useState<string>((new Date().getMonth() + 1).toString());
   const [filterForklift, setFilterForklift] = useState<string>('all');
   const [filterOperator, setFilterOperator] = useState<string>('all');
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -479,7 +479,8 @@ export function ManagerDashboard() {
     const end = parseDateSafe(endDate);
     const now = new Date();
     const effectiveEndForPeriod = Math.min(end.getTime(), now.getTime());
-    const totalPeriodDays = Math.max(1, (effectiveEndForPeriod - start.getTime()) / (1000 * 60 * 60 * 24));
+    const timeDiffMs = effectiveEndForPeriod - start.getTime();
+    const totalPeriodDays = timeDiffMs > 0 ? (timeDiffMs / (1000 * 60 * 60 * 24)) : 0;
     
     // Calculate total planned hours and downtime hours capped per machine
     let totalPlannedHours = 0;
@@ -503,7 +504,7 @@ export function ManagerDashboard() {
         const startMs = parseDateSafe(h.stopTime).getTime();
         const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
 
-        return startMs < effectiveEndForPeriod && hEnd > start.getTime();
+        return startMs <= effectiveEndForPeriod && hEnd >= start.getTime();
       });
 
       // Sum downtime of these stops
@@ -1634,52 +1635,108 @@ export function ManagerDashboard() {
         </div>
       </header>
 
-      {/* Filters */}
-      <div className="bg-white p-4 md:p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-wrap items-center gap-6">
-        <div className="flex items-center gap-2 text-slate-500">
-          <Filter className="w-4 h-4" />
-          <span className="text-xs font-bold uppercase tracking-wider">Filtros:</span>
-        </div>
-        
-        <div className="flex gap-2">
-          <select 
-            value={filterYear}
-            onChange={(e) => setFilterYear(e.target.value)}
-            className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500/20"
-          >
-            {years.map(y => <option key={y} value={y.toString()}>{y}</option>)}
-          </select>
-
-          <select 
-            value={filterMonth}
-            onChange={(e) => setFilterMonth(e.target.value)}
-            className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500/20"
-          >
-            {months.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-          </select>
+      {/* Filters Control Center */}
+      <div className="bg-slate-50/70 p-5 rounded-[2rem] border border-slate-200 shadow-sm flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-5">
+        <div className="flex items-center gap-3">
+          <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl border border-blue-100 flex items-center justify-center">
+            <Filter className="w-5 h-5" />
+          </div>
+          <div className="text-left shrink-0">
+            <span className="text-[10px] font-black uppercase text-blue-600 tracking-wider block">Painel Executivo</span>
+            <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight">Filtros Ativos</h4>
+          </div>
         </div>
 
-        <select 
-          value={filterForklift}
-          onChange={(e) => setFilterForklift(e.target.value)}
-          className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500/20 max-w-[180px]"
-        >
-          <option value="all">Máquinas (Todas)</option>
-          {uniqueForklifts.map(f => (
-            <option key={f.id} value={f.id}>{f.model} ({f.serialNumber})</option>
-          ))}
-        </select>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 flex-1">
+          {/* Card 1: Ano */}
+          <div className="bg-white px-4 py-2.5 rounded-2xl border border-slate-200 hover:border-blue-400 focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/5 transition-all text-left flex items-center gap-3">
+            <div className="text-slate-400 p-1 bg-slate-50 rounded-lg">
+              <Calendar className="w-4 h-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <label className="block text-[9px] font-black uppercase text-slate-400 tracking-wider">Ano de Exercício</label>
+              <select 
+                value={filterYear}
+                onChange={(e) => setFilterYear(e.target.value)}
+                className="w-full bg-transparent border-0 text-xs font-bold text-slate-800 focus:ring-0 p-0 outline-none cursor-pointer"
+              >
+                {years.map(y => <option key={y} value={y.toString()}>{y}</option>)}
+              </select>
+            </div>
+          </div>
 
-        <select 
-          value={filterOperator}
-          onChange={(e) => setFilterOperator(e.target.value)}
-          className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500/20 max-w-[180px]"
-        >
-          <option value="all">Operadores (Todos)</option>
-          {uniqueOperators.map(o => (
-            <option key={o.id} value={o.id}>{o.name}</option>
-          ))}
-        </select>
+          {/* Card 2: Mês */}
+          <div className="bg-white px-4 py-2.5 rounded-2xl border border-slate-200 hover:border-blue-400 focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/5 transition-all text-left flex items-center gap-3">
+            <div className="text-slate-400 p-1 bg-slate-50 rounded-lg">
+              <Calendar className="w-4 h-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <label className="block text-[9px] font-black uppercase text-slate-400 tracking-wider">Mês Vigente</label>
+              <select 
+                value={filterMonth}
+                onChange={(e) => setFilterMonth(e.target.value)}
+                className="w-full bg-transparent border-0 text-xs font-bold text-slate-800 focus:ring-0 p-0 outline-none cursor-pointer"
+              >
+                {months.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Card 3: Máquinas */}
+          <div className="bg-white px-4 py-2.5 rounded-2xl border border-slate-200 hover:border-blue-400 focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/5 transition-all text-left flex items-center gap-3">
+            <div className="text-slate-400 p-1 bg-slate-50 rounded-lg">
+              <Truck className="w-4 h-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <label className="block text-[9px] font-black uppercase text-slate-400 tracking-wider">Máquina / Equipamento</label>
+              <select 
+                value={filterForklift}
+                onChange={(e) => setFilterForklift(e.target.value)}
+                className="w-full bg-transparent border-0 text-xs font-bold text-slate-800 focus:ring-0 p-0 outline-none cursor-pointer"
+              >
+                <option value="all">Todas as máquinas</option>
+                {uniqueForklifts.map(f => (
+                  <option key={f.id} value={f.id}>{f.model} ({f.serialNumber})</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Card 4: Operadores */}
+          <div className="bg-white px-4 py-2.5 rounded-2xl border border-slate-200 hover:border-blue-400 focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/5 transition-all text-left flex items-center gap-3">
+            <div className="text-slate-400 p-1 bg-slate-50 rounded-lg">
+              <Users className="w-4 h-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <label className="block text-[9px] font-black uppercase text-slate-400 tracking-wider">Operador de Turno</label>
+              <select 
+                value={filterOperator}
+                onChange={(e) => setFilterOperator(e.target.value)}
+                className="w-full bg-transparent border-0 text-xs font-bold text-slate-800 focus:ring-0 p-0 outline-none cursor-pointer"
+              >
+                <option value="all">Todos os operadores</option>
+                {uniqueOperators.map(o => (
+                  <option key={o.id} value={o.id}>{o.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Clear Filters Button */}
+        {(filterYear !== new Date().getFullYear().toString() || filterMonth !== (new Date().getMonth() + 1).toString() || filterForklift !== 'all' || filterOperator !== 'all') && (
+          <button
+            onClick={() => {
+              setFilterYear(new Date().getFullYear().toString());
+              setFilterMonth((new Date().getMonth() + 1).toString());
+              setFilterForklift('all');
+              setFilterOperator('all');
+            }}
+            className="px-4 py-3 bg-blue-50 hover:bg-blue-100 active:scale-95 text-blue-600 text-xs font-extrabold uppercase tracking-widest rounded-2xl transition-all cursor-pointer whitespace-nowrap self-center border border-blue-100"
+          >
+            Limpar Filtros
+          </button>
+        )}
       </div>
 
       {/* View Content */}
@@ -1855,7 +1912,8 @@ export function ManagerDashboard() {
                     const end = parseDateSafe(endDate);
                     const now = new Date();
                     const effectiveEndForPeriod = Math.min(end.getTime(), now.getTime());
-                    const totalPeriodDays = Math.max(1, (effectiveEndForPeriod - start.getTime()) / (1000 * 60 * 60 * 24));
+                    const timeDiffMs = effectiveEndForPeriod - start.getTime();
+                    const totalPeriodDays = timeDiffMs > 0 ? (timeDiffMs / (1000 * 60 * 60 * 24)) : 0;
                     const plannedHours = 24 * totalPeriodDays;
                     // 2. Filter stops for this machine using a super robust forklift match and including medium/high/critical severities
                     const machineStops = maintenanceHistory.filter(h => {
@@ -1893,7 +1951,7 @@ export function ManagerDashboard() {
                       
                       const startMs = parseDateSafe(h.stopTime).getTime();
                       const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
-                      return startMs < effectiveEndForPeriod && hEnd > start.getTime();
+                      return startMs <= effectiveEndForPeriod && hEnd >= start.getTime();
                     });
 
                     // 3. Count parts consumed
@@ -2828,11 +2886,11 @@ export function ManagerDashboard() {
                     <div className="grid grid-cols-2 gap-2 font-sans">
                       <div className="bg-amber-50/45 p-2.5 rounded-xl border border-amber-100/30 text-left">
                         <p className="text-[8px] font-black text-amber-800 uppercase tracking-wider">Falha Iminente</p>
-                        <p className="text-base font-extrabold text-amber-950 mt-1">{activeStopsStats.falhasIminentesCount} hoje</p>
+                        <p className="text-base font-extrabold text-amber-950 mt-1">{activeStopsStats.falhasIminentesCount}</p>
                       </div>
                       <div className="bg-blue-50/30 p-2.5 rounded-xl border border-blue-100/35 text-left">
                         <p className="text-[8px] font-black text-blue-800 uppercase tracking-wider">Reparos</p>
-                        <p className="text-base font-extrabold text-blue-950 mt-1">{activeStopsStats.reparosCount} hoje</p>
+                        <p className="text-base font-extrabold text-blue-950 mt-1">{activeStopsStats.reparosCount}</p>
                       </div>
                     </div>
                   </div>
