@@ -14,7 +14,7 @@ import { useAuth } from './Auth';
 import { useData } from './DataContext';
 import { useToast } from './ToastContext';
 import { Forklift, MaintenanceStop, ForkliftStatus } from '../types';
-import { AlertCircle, Clock, CheckCircle2, Play, Loader2, AlertTriangle, Ban, Info, Wrench, History } from 'lucide-react';
+import { AlertCircle, Clock, CheckCircle2, Play, Loader2, AlertTriangle, Ban, Info, Wrench, History, Calendar } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/firebaseUtils';
 import { sendWhatsAppNotification, sendLocalNotification } from '../lib/notifications';
@@ -33,6 +33,32 @@ export function OperatorView({ mode = 'full' }: OperatorViewProps) {
   const [severity, setSeverity] = useState<'low' | 'medium' | 'high'>('high');
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  // Helpers for current local date and time strings
+  const getCurrentLocalDateString = (): string => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const getCurrentLocalTimeString = (): string => {
+    const d = new Date();
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
+  };
+
+  // State for legacy/retroactive registrations
+  const [useRetroactive, setUseRetroactive] = useState(false);
+  const [retroactiveDate, setRetroactiveDate] = useState(getCurrentLocalDateString());
+  const [retroactiveTime, setRetroactiveTime] = useState(getCurrentLocalTimeString());
+  const [retroactiveStatus, setRetroactiveStatus] = useState<'pending' | 'completed'>('pending');
+  // For completed legacy stops
+  const [completionDate, setCompletionDate] = useState(getCurrentLocalDateString());
+  const [completionTime, setCompletionTime] = useState(getCurrentLocalTimeString());
+  const [repairNotes, setRepairNotes] = useState('');
+
   const handleRefresh = () => refreshGlobalData(true);
 
   // Pre-select assigned forklift
@@ -49,29 +75,64 @@ export function OperatorView({ mode = 'full' }: OperatorViewProps) {
     e.preventDefault();
     if (!selectedForklift || !profile) return;
 
-    const activeHighStop = activeStops.find(s => s.forkliftId === selectedForklift && s.severity === 'high');
-    if (activeHighStop) {
-      showToast('Esta máquina está em PARADA CRÍTICA. Não é possível registrar novas ocorrências até o reparo.', 'error');
-      return;
+    if (!useRetroactive) {
+      const activeHighStop = activeStops.find(s => s.forkliftId === selectedForklift && s.severity === 'high');
+      if (activeHighStop) {
+        showToast('Esta máquina está em PARADA CRÍTICA. Não é possível registrar novas ocorrências até o reparo.', 'error');
+        return;
+      }
     }
 
     setIsUploading(true);
     
     try {
-      const maintenanceData = {
+      let finalStopTime = new Date().toISOString();
+      if (useRetroactive && retroactiveDate && retroactiveTime) {
+        const [year, month, day] = retroactiveDate.split('-').map(Number);
+        const [hours, minutes] = retroactiveTime.split(':').map(Number);
+        const localDate = new Date(year, month - 1, day, hours, minutes);
+        finalStopTime = localDate.toISOString();
+      }
+
+      let finalStartTime: string | null = null;
+      let finalEndTime: string | null = null;
+      let finalStatus = 'pending';
+
+      if (useRetroactive && retroactiveStatus === 'completed') {
+        finalStatus = 'completed';
+        const [sYear, sMonth, sDay] = retroactiveDate.split('-').map(Number);
+        const [sHours, sMinutes] = retroactiveTime.split(':').map(Number);
+        const startLocalDate = new Date(sYear, sMonth - 1, sDay, sHours, sMinutes + 10);
+        finalStartTime = startLocalDate.toISOString();
+
+        const [cYear, cMonth, cDay] = completionDate.split('-').map(Number);
+        const [cHours, cMinutes] = completionTime.split(':').map(Number);
+        const endLocalDate = new Date(cYear, cMonth - 1, cDay, cHours, cMinutes);
+        finalEndTime = endLocalDate.toISOString();
+      }
+
+      const maintenanceData: any = {
         forkliftId: selectedForklift,
         type: 'corrective',
-        status: 'pending',
+        status: finalStatus,
         operatorId: profile.uid, // Keep for legacy if needed
         operatorName: profile.displayName || profile.email.split('@')[0], // Keep for legacy if needed
         operatorIds: [profile.uid],
         operatorNames: [profile.displayName || profile.email.split('@')[0]],
-        stopTime: new Date().toISOString(),
+        stopTime: finalStopTime,
         description,
         parts: [],
         severity,
         isIncidentOnly: severity !== 'high'
       };
+
+      if (finalStatus === 'completed') {
+        maintenanceData.startTime = finalStartTime;
+        maintenanceData.endTime = finalEndTime;
+        maintenanceData.repairNotes = repairNotes || 'Importação retroativa de parada concluída anterior ao aplicativo.';
+        maintenanceData.mechanicId = profile.uid;
+        maintenanceData.mechanicName = profile.displayName || profile.email.split('@')[0];
+      }
 
       // Start operations
       const addPromise = addDoc(collection(db, 'maintenance'), maintenanceData);
@@ -79,17 +140,19 @@ export function OperatorView({ mode = 'full' }: OperatorViewProps) {
       // Update forklift status
       const promises: Promise<any>[] = [addPromise];
       
-      let newStatus: any = 'at_risk';
-      // Low severity stays available or at_risk? 
-      // User says "Reparo" should allow operation. at_risk is best as it signals maintenance needed.
-      if (severity === 'low') newStatus = 'at_risk'; 
-      else if (severity === 'medium') newStatus = 'at_risk';
-      else if (severity === 'high') newStatus = 'stopped';
+      if (!useRetroactive || retroactiveStatus === 'pending') {
+        let newStatus: any = 'at_risk';
+        // Low severity stays available or at_risk? 
+        // User says "Reparo" should allow operation. at_risk is best as it signals maintenance needed.
+        if (severity === 'low') newStatus = 'at_risk'; 
+        else if (severity === 'medium') newStatus = 'at_risk';
+        else if (severity === 'high') newStatus = 'stopped';
 
-      if (newStatus !== 'available') {
-        promises.push(updateDoc(doc(db, 'forklifts', selectedForklift), {
-          status: newStatus
-        }));
+        if (newStatus !== 'available') {
+          promises.push(updateDoc(doc(db, 'forklifts', selectedForklift), {
+            status: newStatus
+          }));
+        }
       }
 
       // Race against a timeout to provide immediate feedback if offline/slow
@@ -131,12 +194,15 @@ export function OperatorView({ mode = 'full' }: OperatorViewProps) {
         `*Operador:* ${profile.displayName || profile.email}\n` +
         `*Problema:* ${description}\n` +
         `*Status:* ${statusLabels[severity]}\n` +
-        `*Data/Hora:* ${new Date().toLocaleString('pt-BR')}`
+        `*Data/Hora:* ${new Date(finalStopTime).toLocaleString('pt-BR')}`
       );
 
       setSelectedForklift('');
       setDescription('');
       setSeverity('high');
+      setUseRetroactive(false);
+      setRetroactiveStatus('pending');
+      setRepairNotes('');
     } catch (error: any) {
       console.error("Critical error registering stop:", error);
       handleFirestoreError(error, OperationType.WRITE, 'maintenance');
@@ -376,6 +442,98 @@ export function OperatorView({ mode = 'full' }: OperatorViewProps) {
                   {severity === 'high' && <CheckCircle2 className="w-5 h-5 text-red-500" />}
                 </div>
               </div>
+            </div>
+
+            {/* Option for retroactive historical registrations */}
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 mt-2 space-y-3 text-left">
+              <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={useRetroactive}
+                  onChange={(e) => setUseRetroactive(e.target.checked)}
+                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 mt-0.5"
+                />
+                <div>
+                  <span className="text-sm font-bold text-slate-700 block">Registrar Parada Retroativa</span>
+                  <span className="text-[11px] text-slate-500 font-medium">Use para incluir paradas e quebras ocorridas no passado (histórico anterior ao App)</span>
+                </div>
+              </label>
+
+              {useRetroactive && (
+                <div className="space-y-3 pt-3 border-t border-slate-200/80">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Data da Parada</label>
+                      <input
+                        type="date"
+                        value={retroactiveDate}
+                        onChange={(e) => setRetroactiveDate(e.target.value)}
+                        className="w-full p-2.5 text-xs font-semibold border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20"
+                        required={useRetroactive}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Hora da Parada</label>
+                      <input
+                        type="time"
+                        value={retroactiveTime}
+                        onChange={(e) => setRetroactiveTime(e.target.value)}
+                        className="w-full p-2.5 text-xs font-semibold border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20"
+                        required={useRetroactive}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Situação Inicial da Parada</label>
+                    <select
+                      value={retroactiveStatus}
+                      onChange={(e) => setRetroactiveStatus(e.target.value as 'pending' | 'completed')}
+                      className="w-full p-2.5 text-xs font-semibold border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 outline-none"
+                    >
+                      <option value="pending">⚙️ Aberta (Enviar para o fluxo da oficina)</option>
+                      <option value="completed">✅ Concluída (Registrar histórico finalizado)</option>
+                    </select>
+                  </div>
+
+                  {retroactiveStatus === 'completed' && (
+                    <div className="space-y-3 pt-3 border-t border-slate-200/80">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Data de Conclusão</label>
+                          <input
+                            type="date"
+                            value={completionDate}
+                            onChange={(e) => setCompletionDate(e.target.value)}
+                            className="w-full p-2.5 text-xs font-semibold border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20"
+                            required={useRetroactive && retroactiveStatus === 'completed'}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Hora de Conclusão</label>
+                          <input
+                            type="time"
+                            value={completionTime}
+                            onChange={(e) => setCompletionTime(e.target.value)}
+                            className="w-full p-2.5 text-xs font-semibold border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20"
+                            required={useRetroactive && retroactiveStatus === 'completed'}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1 font-sans">Observações do Reparo / Solução</label>
+                        <textarea
+                          value={repairNotes}
+                          onChange={(e) => setRepairNotes(e.target.value)}
+                          className="w-full p-2.5 text-xs font-semibold border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 h-16 resize-none"
+                          placeholder="Ex: Trocado filtro de óleo e mangueira hidraulica..."
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div>
