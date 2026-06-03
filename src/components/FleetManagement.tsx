@@ -49,6 +49,7 @@ export function FleetManagement({ onReportOccurrence }: { onReportOccurrence?: (
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [responsibilityTab, setResponsibilityTab] = useState<'mechanic' | 'other'>('mechanic');
 
   // Form state for new machine
   const [formData, setFormData] = useState({
@@ -58,7 +59,8 @@ export function FleetManagement({ onReportOccurrence }: { onReportOccurrence?: (
     initialHourMeter: '',
     nextPreventiveHorometer: '500',
     assignedOperatorIdShift1: '',
-    assignedOperatorIdShift2: ''
+    assignedOperatorIdShift2: '',
+    isMechanicResponsibility: true
   });
 
   const [editingHourMeter, setEditingHourMeter] = useState<{ id: string, value: string, field: 'last' | 'next' } | null>(null);
@@ -94,6 +96,7 @@ export function FleetManagement({ onReportOccurrence }: { onReportOccurrence?: (
         assignedOperatorNameShift1: op1?.displayName || null,
         assignedOperatorIdShift2: formData.assignedOperatorIdShift2 || null,
         assignedOperatorNameShift2: op2?.displayName || null,
+        isMechanicResponsibility: formData.isMechanicResponsibility,
         lastHourMeterUpdate: new Date().toISOString(),
         createdAt: new Date().toISOString()
       });
@@ -108,7 +111,8 @@ export function FleetManagement({ onReportOccurrence }: { onReportOccurrence?: (
         initialHourMeter: '',
         nextPreventiveHorometer: '500',
         assignedOperatorIdShift1: '', 
-        assignedOperatorIdShift2: '' 
+        assignedOperatorIdShift2: '',
+        isMechanicResponsibility: true
       });
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'forklifts');
@@ -191,14 +195,30 @@ export function FleetManagement({ onReportOccurrence }: { onReportOccurrence?: (
     f.serialNumber.toLowerCase().includes(searchTerm.toLowerCase())
   ).sort((a, b) => a.serialNumber.localeCompare(b.serialNumber));
 
+  const targetForklifts = useMemo(() => {
+    if (responsibilityTab === 'mechanic') {
+      return filteredForklifts.filter(f => f.isMechanicResponsibility !== false);
+    } else {
+      return filteredForklifts.filter(f => f.isMechanicResponsibility === false);
+    }
+  }, [filteredForklifts, responsibilityTab]);
+
   const stats = useMemo(() => {
-    const total = uniqueForklifts.length;
-    const operational = uniqueForklifts.filter(f => f.status === 'available' || f.status === 'at_risk').length;
-    const inMaintenance = uniqueForklifts.filter(f => f.status === 'maintenance' || f.status === 'stopped').length;
-    const preventiveOverdue = uniqueForklifts.filter(f => getMaintenanceStatus(f.lastHourMeter || 0, f.nextPreventiveHorometer || 0) === 'vencida').length;
+    const list = uniqueForklifts.filter(f => {
+      if (responsibilityTab === 'mechanic') {
+        return f.isMechanicResponsibility !== false;
+      } else {
+        return f.isMechanicResponsibility === false;
+      }
+    });
+
+    const total = list.length;
+    const operational = list.filter(f => f.status === 'available' || f.status === 'at_risk').length;
+    const inMaintenance = list.filter(f => f.status === 'maintenance' || f.status === 'stopped').length;
+    const preventiveOverdue = list.filter(f => getMaintenanceStatus(f.lastHourMeter || 0, f.nextPreventiveHorometer || 0) === 'vencida').length;
     
     // Calculate global health score
-    const healthScores = uniqueForklifts.map(f => {
+    const healthScores = list.map(f => {
       const remaining = Math.max(0, (f.nextPreventiveHorometer || 0) - (f.lastHourMeter || 0));
       const preventiveBonus = remaining > 100 ? 20 : (remaining > 50 ? 10 : 0);
       const statusPenalty = f.status === 'available' ? 80 : (f.status === 'at_risk' ? 40 : 10);
@@ -208,7 +228,7 @@ export function FleetManagement({ onReportOccurrence }: { onReportOccurrence?: (
     const avgHealth = healthScores.length > 0 ? (healthScores.reduce((a, b) => a + b, 0) / healthScores.length) : 0;
 
     return { total, operational, maintenance: inMaintenance, preventiveOverdue, avgHealth: Math.round(avgHealth) };
-  }, [uniqueForklifts]);
+  }, [uniqueForklifts, responsibilityTab]);
 
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-8">
@@ -286,6 +306,32 @@ export function FleetManagement({ onReportOccurrence }: { onReportOccurrence?: (
         ))}
       </div>
 
+      {/* Tab Selector by mechanic responsibility */}
+      <div className="flex bg-slate-100 p-1.5 rounded-2xl max-w-xl mx-auto border border-slate-200 gap-2">
+        <button
+          onClick={() => setResponsibilityTab('mechanic')}
+          className={cn(
+            "flex-1 py-3 text-xs font-black uppercase tracking-wider rounded-xl transition-all",
+            responsibilityTab === 'mechanic'
+              ? "bg-slate-900 text-white shadow-md"
+              : "text-slate-500 hover:text-slate-800"
+          )}
+        >
+          Do Mecânico ({uniqueForklifts.filter(f => f.isMechanicResponsibility !== false).length})
+        </button>
+        <button
+          onClick={() => setResponsibilityTab('other')}
+          className={cn(
+            "flex-1 py-3 text-xs font-black uppercase tracking-wider rounded-xl transition-all",
+            responsibilityTab === 'other'
+              ? "bg-slate-900 text-white shadow-md"
+              : "text-slate-500 hover:text-slate-800"
+          )}
+        >
+          Sem Mecânico ({uniqueForklifts.filter(f => f.isMechanicResponsibility === false).length})
+        </button>
+      </div>
+
       <div className="relative group">
         <Search className="w-5 h-5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2 group-focus-within:text-blue-500 transition-colors" />
         <input 
@@ -303,7 +349,7 @@ export function FleetManagement({ onReportOccurrence }: { onReportOccurrence?: (
             <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
             <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest">Sincronizando ativos...</p>
           </div>
-        ) : filteredForklifts.length === 0 ? (
+        ) : targetForklifts.length === 0 ? (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -312,11 +358,11 @@ export function FleetManagement({ onReportOccurrence }: { onReportOccurrence?: (
             <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-4">
               <Search className="w-10 h-10 text-slate-200" />
             </div>
-            <p className="text-slate-400 font-bold">Nenhum ativo encontrado nos registros.</p>
+            <p className="text-slate-400 font-bold">Nenhum ativo encontrado nesta categoria.</p>
           </motion.div>
         ) : (
           <AnimatePresence mode="popLayout">
-            {filteredForklifts.map((f, idx) => {
+            {targetForklifts.map((f, idx) => {
               const prevMaintStatus = getMaintenanceStatus(f.lastHourMeter || 0, f.nextPreventiveHorometer || 0, f.lastHourMeterUpdate);
               const nextHours = Number((f.nextPreventiveHorometer || 0).toFixed(1));
               const lastHours = Number((f.lastHourMeter || 0).toFixed(1));
@@ -692,6 +738,24 @@ export function FleetManagement({ onReportOccurrence }: { onReportOccurrence?: (
                       <option key={o.uid} value={o.uid}>{o.displayName}</option>
                     ))}
                   </select>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-105">
+                <input
+                  type="checkbox"
+                  id="responsabilidade-mec"
+                  checked={formData.isMechanicResponsibility}
+                  onChange={(e) => setFormData({...formData, isMechanicResponsibility: e.target.checked})}
+                  className="w-5 h-5 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer"
+                />
+                <div className="text-left">
+                  <label htmlFor="responsabilidade-mec" className="block text-xs font-black text-slate-800 uppercase tracking-wider cursor-pointer select-none">
+                    Responsabilidade do Mecânico
+                  </label>
+                  <p className="text-[9px] text-slate-500 font-bold leading-tight mt-0.5">
+                    Se desmarcado, os dados de manutenção desta máquina não entram nos cálculos gerais do gestor e ela fica invisível na fila de manutenções dos mecânicos.
+                  </p>
                 </div>
               </div>
 

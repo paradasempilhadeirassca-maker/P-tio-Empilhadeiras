@@ -42,49 +42,34 @@ import {
   Area,
 } from 'recharts';
 import { TrendingUp, Clock, Activity, AlertTriangle, Users, Package, Calendar, Filter, Bell, ClipboardCheck, Watch, Layers, BoxSelect, Truck, CloudRain, Info, ArrowLeft, Target, Settings2, Plus, Save, X, Trash2, History as HistoryIcon, Wrench, ShieldAlert, BarChart3, ChevronRight, UserMinus, UserCheck, Timer, Footprints, ShieldCheck, Zap, CheckCircle2, AlertCircle, LayoutDashboard } from 'lucide-react';
-import { cn, formatDuration, formatDate, formatTime, formatDateTime, formatCurrency, formatNumber } from '../lib/utils';
+import { cn, formatDuration, formatDate, formatTime, formatDateTime, formatCurrency, formatNumber, parseDateSafe } from '../lib/utils';
 import { calculateOperatorEfficiency } from '../lib/operationalLogic';
 import { sendWhatsAppNotification, sendLocalNotification } from '../lib/notifications';
 import { getMaintenanceStatus } from '../lib/maintenanceLogic';
 
-const parseDateSafe = (val: any): Date => {
-  if (!val) return new Date();
-  if (val instanceof Date) return val;
-  if (typeof val === 'object') {
-    if (typeof val.toDate === 'function') {
-      return val.toDate();
-    }
-    if (typeof val.seconds === 'number') {
-      return new Date(val.seconds * 1000);
-    }
-  }
-  if (typeof val === 'string') {
-    // 1. Check for standard ISO YYYY-MM-DD format (no time) to avoid UTC day shift
-    const yyyyMmDdOnly = val.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (yyyyMmDdOnly) {
-      const year = parseInt(yyyyMmDdOnly[1], 10);
-      const month = parseInt(yyyyMmDdOnly[2], 10) - 1;
-      const day = parseInt(yyyyMmDdOnly[3], 10);
-      return new Date(year, month, day, 12, 0, 0); // Local noon
-    }
+const isValidDateValue = (val: any): boolean => {
+  if (!val) return false;
+  if (typeof val === 'string' && val.trim() === '') return false;
+  return true;
+};
 
-    // 2. Check for DD/MM/YYYY format with optional time (standard Brazilian format)
-    const ddMmYyyyMatch = val.match(/^(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
-    if (ddMmYyyyMatch) {
-      const day = parseInt(ddMmYyyyMatch[1], 10);
-      const month = parseInt(ddMmYyyyMatch[2], 10) - 1;
-      const year = parseInt(ddMmYyyyMatch[3], 10);
-      const hours = ddMmYyyyMatch[4] ? parseInt(ddMmYyyyMatch[4], 10) : 12;
-      const minutes = ddMmYyyyMatch[5] ? parseInt(ddMmYyyyMatch[5], 10) : 0;
-      const seconds = ddMmYyyyMatch[6] ? parseInt(ddMmYyyyMatch[6], 10) : 0;
-      return new Date(year, month, day, hours, minutes, seconds);
+const getStopTimeMs = (h: any): number => {
+  if (!h) return 0;
+  const d = parseDateSafe(h.stopTime || h.startTime);
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+};
+
+const getEndTimeMs = (h: any, defaultTimeMs: number): number => {
+  if (!h) return defaultTimeMs;
+  if (h.status === 'completed') {
+    if (isValidDateValue(h.endTime)) {
+      const d = parseDateSafe(h.endTime);
+      if (!isNaN(d.getTime())) return d.getTime();
     }
+    const stopMs = getStopTimeMs(h);
+    return stopMs > 0 ? stopMs : defaultTimeMs;
   }
-  const d = new Date(val);
-  if (!isNaN(d.getTime())) {
-    return d;
-  }
-  return new Date();
+  return defaultTimeMs;
 };
 
 const getLocalDateString = (d: Date = new Date()): string => {
@@ -178,10 +163,36 @@ const getAvailabilityStyle = (value: number) => {
 
 export function ManagerDashboard() {
   const { profile, loading: authLoading, setQuotaExceeded } = useAuth();
-  const { forklifts, uniqueForklifts, activeStops, goals: operationGoals, refreshGlobalData } = useData();
-  const [checklists, setChecklists] = useState<Checklist[]>([]);
-  const [maintenanceHistory, setMaintenanceHistory] = useState<MaintenanceStop[]>([]);
-  const [operationalEvents, setOperationalEvents] = useState<OperationalEvent[]>([]);
+  const { forklifts: rawForklifts, uniqueForklifts: rawUniqueForklifts, activeStops: rawActiveStops, goals: operationGoals, refreshGlobalData } = useData();
+  const [rawChecklists, setChecklists] = useState<Checklist[]>([]);
+  const [rawMaintenanceHistory, setMaintenanceHistory] = useState<MaintenanceStop[]>([]);
+  const [rawOperationalEvents, setOperationalEvents] = useState<OperationalEvent[]>([]);
+
+  // Filter 8640001 out of everything to avoid leaking it in any charts or lists
+  const forklifts = useMemo(() => {
+    return rawForklifts.filter(f => f.id !== '8640001' && (!f.serialNumber || !f.serialNumber.trim().startsWith('8640001')));
+  }, [rawForklifts]);
+
+  const uniqueForklifts = useMemo(() => {
+    return rawUniqueForklifts.filter(f => f.id !== '8640001' && (!f.serialNumber || !f.serialNumber.trim().startsWith('8640001')));
+  }, [rawUniqueForklifts]);
+
+  const activeStops = useMemo(() => {
+    return rawActiveStops.filter(s => s.forkliftId !== '8640001');
+  }, [rawActiveStops]);
+
+  const checklists = useMemo(() => {
+    return rawChecklists.filter(c => c.forkliftId !== '8640001');
+  }, [rawChecklists]);
+
+  const maintenanceHistory = useMemo(() => {
+    return rawMaintenanceHistory.filter(h => h.forkliftId !== '8640001');
+  }, [rawMaintenanceHistory]);
+
+  const operationalEvents = useMemo(() => {
+    return rawOperationalEvents.filter(e => e.forkliftId !== '8640001');
+  }, [rawOperationalEvents]);
+
   const [shiftReports, setShiftReports] = useState<ShiftReport[]>([]);
   const [absences, setAbsences] = useState<OperatorAbsence[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
@@ -193,6 +204,21 @@ export function ManagerDashboard() {
   const [filterForklift, setFilterForklift] = useState<string>('all');
   const [filterOperator, setFilterOperator] = useState<string>('all');
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [fleetResponsibilityFilter, setFleetResponsibilityFilter] = useState<'all' | 'mechanic' | 'other'>('mechanic');
+
+  const scopedForklifts = useMemo(() => {
+    if (fleetResponsibilityFilter === 'mechanic') {
+      return uniqueForklifts.filter(f => f.isMechanicResponsibility !== false);
+    } else if (fleetResponsibilityFilter === 'other') {
+      return uniqueForklifts.filter(f => f.isMechanicResponsibility === false);
+    } else {
+      return uniqueForklifts;
+    }
+  }, [uniqueForklifts, fleetResponsibilityFilter]);
+
+  const mechanicUniqueForklifts = useMemo(() => {
+    return uniqueForklifts.filter(f => f.isMechanicResponsibility !== false);
+  }, [uniqueForklifts]);
 
   // Mechanic presence/absence (pointing) states
   const [selectedMechanicId, setSelectedMechanicId] = useState<string>('');
@@ -325,9 +351,17 @@ export function ManagerDashboard() {
       const matchesMonth = filterMonth === 'all' || (date.getMonth() + 1).toString() === filterMonth;
       const matchesForklift = matchesForkliftFilter(cl.forkliftId, filterForklift);
       const matchesOperator = filterOperator === 'all' || cl.operatorId === filterOperator;
+      
+      const fObj = forklifts.find(fork => fork.id === cl.forkliftId || (fork.serialNumber && cl.forkliftId && fork.serialNumber.trim().toLowerCase() === cl.forkliftId.trim().toLowerCase()));
+      if (fleetResponsibilityFilter === 'mechanic') {
+        if (fObj && fObj.isMechanicResponsibility === false) return false;
+      } else if (fleetResponsibilityFilter === 'other') {
+        if (!fObj || fObj.isMechanicResponsibility !== false) return false;
+      }
+
       return matchesYear && matchesMonth && matchesForklift && matchesOperator;
     });
-  }, [checklists, filterYear, filterMonth, filterForklift, filterOperator, matchesForkliftFilter]);
+  }, [checklists, filterYear, filterMonth, filterForklift, filterOperator, matchesForkliftFilter, forklifts, fleetResponsibilityFilter]);
 
   const filteredHistory = useMemo(() => {
     return maintenanceHistory.filter(h => {
@@ -337,9 +371,17 @@ export function ManagerDashboard() {
       const matchesMonth = filterMonth === 'all' || (date.getMonth() + 1).toString() === filterMonth;
       const matchesForklift = matchesForkliftFilter(h.forkliftId, filterForklift);
       const matchesOperator = filterOperator === 'all' || h.operatorId === filterOperator || (h.operatorIds && h.operatorIds.includes(filterOperator));
+      
+      const fObj = forklifts.find(fork => fork.id === h.forkliftId || (fork.serialNumber && h.forkliftId && fork.serialNumber.trim().toLowerCase() === h.forkliftId.trim().toLowerCase()));
+      if (fleetResponsibilityFilter === 'mechanic') {
+        if (fObj && fObj.isMechanicResponsibility === false) return false;
+      } else if (fleetResponsibilityFilter === 'other') {
+        if (!fObj || fObj.isMechanicResponsibility !== false) return false;
+      }
+
       return matchesYear && matchesMonth && matchesForklift && matchesOperator;
     });
-  }, [maintenanceHistory, filterYear, filterMonth, filterForklift, filterOperator, matchesForkliftFilter]);
+  }, [maintenanceHistory, filterYear, filterMonth, filterForklift, filterOperator, matchesForkliftFilter, forklifts, fleetResponsibilityFilter]);
 
   const startDate = useMemo(() => {
     const year = parseInt(filterYear);
@@ -451,15 +493,24 @@ export function ManagerDashboard() {
   const kpis = useMemo(() => {
     // Unique list of forklifts filtered if necessary
     const targetUniqueForklifts = filterForklift === 'all' 
-      ? uniqueForklifts 
+      ? scopedForklifts 
       : uniqueForklifts.filter(f => f.id === filterForklift || (f.serialNumber && filterForklift && f.serialNumber.trim().toLowerCase() === filterForklift.trim().toLowerCase()));
 
-    const totalFleetUnits = targetUniqueForklifts.length || 1;
+    // Exclude 'sem mecânico' machines for calculation of MTTR, MTBF, availability
+    const mtUniqueForklifts = targetUniqueForklifts.filter(f => f.isMechanicResponsibility !== false);
+    const totalFleetUnits = mtUniqueForklifts.length || 1;
     
     // Active stops filtered if necessary
-    const targetActiveStops = filterForklift === 'all'
-      ? activeStops
-      : activeStops.filter(s => matchesForkliftFilter(s.forkliftId, filterForklift));
+    const targetActiveStops = activeStops.filter(s => {
+      if (filterForklift !== 'all' && !matchesForkliftFilter(s.forkliftId, filterForklift)) return false;
+      const f = forklifts.find(fork => fork.id === s.forkliftId || (fork.serialNumber && s.forkliftId && fork.serialNumber.trim().toLowerCase() === s.forkliftId.trim().toLowerCase()));
+      if (fleetResponsibilityFilter === 'mechanic') {
+        if (f && f.isMechanicResponsibility === false) return false;
+      } else if (fleetResponsibilityFilter === 'other') {
+        if (!f || f.isMechanicResponsibility !== false) return false;
+      }
+      return true;
+    });
       
     const filteredActiveStops = filterOperator === 'all'
       ? targetActiveStops
@@ -468,10 +519,12 @@ export function ManagerDashboard() {
     const stoppedUnits = filteredActiveStops.filter(s => {
       const sev = s.severity || (s.type === 'preventive' ? 'low' : 'high');
       const isParada = sev === 'high' || sev === 'critical';
-      return isParada;
+      const f = forklifts.find(fork => fork.id === s.forkliftId || (fork.serialNumber && s.forkliftId && fork.serialNumber.trim().toLowerCase() === s.forkliftId.trim().toLowerCase()));
+      const isMech = !f || f.isMechanicResponsibility !== false;
+      return isParada && isMech;
     }).length;
     
-    // Fleet instant availability
+    // Fleet instant availability (calculated only for mechanic machines)
     const currentAvailability = ((totalFleetUnits - stoppedUnits) / totalFleetUnits) * 100;
 
     // Monthly View KPIs
@@ -482,12 +535,12 @@ export function ManagerDashboard() {
     const timeDiffMs = effectiveEndForPeriod - start.getTime();
     const totalPeriodDays = timeDiffMs > 0 ? (timeDiffMs / (1000 * 60 * 60 * 24)) : 0;
     
-    // Calculate total planned hours and downtime hours capped per machine
+    // Calculate total planned hours and downtime hours capped per machine (only for mechanic machines)
     let totalPlannedHours = 0;
     let totalDowntimeHours = 0;
     let totalForkliftMtbfHours = 0;
 
-    targetUniqueForklifts.forEach(f => {
+    mtUniqueForklifts.forEach(f => {
       const plannedHoursForMachine = 24 * totalPeriodDays;
       totalPlannedHours += plannedHoursForMachine;
 
@@ -501,8 +554,9 @@ export function ManagerDashboard() {
         const isParada = sev === 'high' || sev === 'critical';
         if (!isParada) return false; // Ignorar "reparos" (low) ou "Falha" (medium)
         
-        const startMs = parseDateSafe(h.stopTime).getTime();
-        const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
+        const startMs = getStopTimeMs(h);
+        if (startMs === 0) return false;
+        const hEnd = getEndTimeMs(h, now.getTime());
 
         return startMs <= effectiveEndForPeriod && hEnd >= start.getTime();
       });
@@ -510,8 +564,9 @@ export function ManagerDashboard() {
       // Sum downtime of these stops
       let machineDowntimeMs = 0;
       machineStops.forEach(h => {
-        const startMs = parseDateSafe(h.stopTime).getTime();
-        const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
+        const startMs = getStopTimeMs(h);
+        if (startMs === 0) return;
+        const hEnd = getEndTimeMs(h, now.getTime());
         
         const effectiveStart = Math.max(start.getTime(), startMs);
         const effectiveEnd = Math.min(effectiveEndForPeriod, hEnd);
@@ -532,25 +587,29 @@ export function ManagerDashboard() {
 
     const totalOperatingHours = Math.max(0, totalPlannedHours - totalDowntimeHours);
 
-    // Calculate MTTR only for the chosen month's started/completed maintenance records
-    // This matches standard MTTR calculation of the spreadsheet and avoids prior-month overlaps
+    // Calculate MTTR only for the chosen month's started/completed maintenance records (excluding non-mechanic machines)
     const filteredParadas = filteredHistory.filter(h => {
       const sev = h.severity || (h.type === 'preventive' ? 'low' : 'high');
-      return sev === 'high' || sev === 'critical';
+      const isParada = sev === 'high' || sev === 'critical';
+      if (!isParada) return false;
+      const fObj = forklifts.find(fork => fork.id === h.forkliftId || (fork.serialNumber && h.forkliftId && fork.serialNumber.trim().toLowerCase() === h.forkliftId.trim().toLowerCase()));
+      const isMech = !fObj || fObj.isMechanicResponsibility !== false;
+      return isMech;
     });
     const failuresCount = filteredParadas.length;
 
     let totalRepairTimeMs = 0;
     filteredParadas.forEach(h => {
-      const repairStart = parseDateSafe(h.stopTime).getTime();
-      const repairEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
+      const repairStart = getStopTimeMs(h);
+      if (repairStart === 0) return;
+      const repairEnd = getEndTimeMs(h, now.getTime());
       totalRepairTimeMs += Math.max(0, repairEnd - repairStart);
     });
 
     const mttr = failuresCount > 0 ? totalRepairTimeMs / failuresCount : 0;
 
     // MTBF is the average of individual forklift MTBFs in hours
-    const mtbf = targetUniqueForklifts.length > 0 ? totalForkliftMtbfHours / targetUniqueForklifts.length : 0;
+    const mtbf = mtUniqueForklifts.length > 0 ? totalForkliftMtbfHours / mtUniqueForklifts.length : 0;
 
     // Physical availability = (planned hours - downtime) / planned hours * 100
     const monthlyAvailability = totalPlannedHours > 0 
@@ -560,7 +619,7 @@ export function ManagerDashboard() {
     // NOVO CÁLCULO DE CONFIABILIDADE (Hardened)
     const currentStoppedPenalty = filteredActiveStops.reduce((acc, s) => {
       const stopDate = parseDateSafe(s.stopTime);
-      const diffDays = Math.floor((now.getTime() - stopDate.getTime()) / (1000 * 60 * 60 * 24));
+      const diffDays = isNaN(stopDate.getTime()) ? 0 : Math.floor((now.getTime() - stopDate.getTime()) / (1000 * 60 * 60 * 24));
       if (diffDays > 30) return acc + 40; // Grave
       if (diffDays > 15) return acc + 20;
       if (diffDays > 7) return acc + 10;
@@ -587,7 +646,7 @@ export function ManagerDashboard() {
       correctiveCount: filteredHistory.filter(h => h.type === 'corrective').length,
       preventiveCount: filteredHistory.filter(h => h.type === 'preventive').length
     };
-  }, [maintenanceHistory, uniqueForklifts, activeStops, filterYear, filterMonth, filterForklift, filterOperator, filteredHistory, matchesForkliftFilter]);
+  }, [maintenanceHistory, forklifts, uniqueForklifts, activeStops, filterYear, filterMonth, filterForklift, filterOperator, filteredHistory, matchesForkliftFilter, fleetResponsibilityFilter, startDate, endDate]);
 
   const topAffectedMachines = useMemo(() => {
     const map: Record<string, { count: number, downtime: number, name: string }> = {};
@@ -604,10 +663,11 @@ export function ManagerDashboard() {
       const isParada = sev === 'high' || sev === 'critical';
       if (!isParada) return; // Only count registered stops (paradas)
       
-      const startMs = parseDateSafe(h.stopTime).getTime();
+      const startMs = getStopTimeMs(h);
+      if (startMs === 0) return;
       if (!map[key]) map[key] = { count: 0, downtime: 0, name };
       map[key].count += 1;
-      const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : Date.now();
+      const hEnd = getEndTimeMs(h, Date.now());
       map[key].downtime += Math.max(0, hEnd - startMs);
     });
     return Object.values(map).sort((a, b) => b.count - a.count).slice(0, 5);
@@ -679,7 +739,7 @@ export function ManagerDashboard() {
     const totalOperators = users.filter(u => u.role === 'operator' || u.role === 'production').length;
     const operatorAbsences = activeAbsences.filter(a => a.role === 'operator' || a.role === 'production' || !a.role); // Fallback for old data
     const availableOperators = totalOperators - operatorAbsences.length;
-    const activeForklifts = uniqueForklifts.filter(f => f.status === 'available').length;
+    const activeForklifts = mechanicUniqueForklifts.filter(f => f.status === 'available').length;
     
     const operationalCapacity = totalOperators > 0 ? (availableOperators / totalOperators) * 100 : 0;
     const machineOperatorImbalance = activeForklifts > availableOperators;
@@ -698,7 +758,7 @@ export function ManagerDashboard() {
     const backlogCount = activeStops.length;
     const awaitingMaintenance = activeStops.filter(s => s.status === 'pending').length;
     
-    const preventivesAtRisk = uniqueForklifts.filter(f => {
+    const preventivesAtRisk = mechanicUniqueForklifts.filter(f => {
       if (!f.nextPreventiveHorometer || !f.lastHourMeter) return false;
       return f.nextPreventiveHorometer - f.lastHourMeter < 50;
     }).length;
@@ -1552,7 +1612,7 @@ export function ManagerDashboard() {
     const okList: Forklift[] = [];
     
     const targetedForklifts = filterForklift === 'all' 
-      ? uniqueForklifts 
+      ? scopedForklifts 
       : uniqueForklifts.filter(f => f.id === filterForklift);
 
     if (filterMonth === 'all') {
@@ -1583,23 +1643,32 @@ export function ManagerDashboard() {
     }
 
     return { vencidas, aVencer, ok, desatualizadas, vencidasList, aVencerList, okList };
-  }, [uniqueForklifts, filterMonth, filteredHistory, filterForklift]);
+  }, [scopedForklifts, filterMonth, filteredHistory, filterForklift, uniqueForklifts]);
 
   // Check-list Compliance stats for today (unaffected by filters)
   const checklistComplianceToday = useMemo(() => {
     const today = getLocalDateString();
+    
+    const targetForklistIds = new Set(scopedForklifts.map(f => f.id));
+    const targetSerials = new Set(scopedForklifts.map(f => (f.serialNumber || '').trim().toLowerCase()));
+
     const completedTodayForkliftIds = new Set(
       checklists
-        .filter(c => getLocalDateString(parseDateSafe(c.timestamp)) === today)
+        .filter(c => {
+          if (getLocalDateString(parseDateSafe(c.timestamp)) !== today) return false;
+          const matchesId = targetForklistIds.has(c.forkliftId);
+          const matchesSerial = c.forkliftId ? targetSerials.has(c.forkliftId.trim().toLowerCase()) : false;
+          return matchesId || matchesSerial;
+        })
         .map(c => c.forkliftId)
     );
     const completedTodayCount = completedTodayForkliftIds.size;
-    const totalRegistered = uniqueForklifts.length;
+    const totalRegistered = scopedForklifts.length;
     const compliancePercentage = totalRegistered > 0
       ? Math.min(100, Math.round((completedTodayCount / totalRegistered) * 100))
       : 100;
 
-    const pendingForklifts = uniqueForklifts.filter(f => !completedTodayForkliftIds.has(f.id));
+    const pendingForklifts = scopedForklifts.filter(f => !completedTodayForkliftIds.has(f.id));
 
     return {
       completedToday: completedTodayCount,
@@ -1608,7 +1677,7 @@ export function ManagerDashboard() {
       pendingForklifts,
       isMonthly: false
     };
-  }, [checklists, uniqueForklifts]);
+  }, [checklists, scopedForklifts]);
 
   return (
     <div id="simplified-manager-dashboard" className="max-w-7xl mx-auto p-4 md:p-6 space-y-8 animate-in fade-in duration-500">
@@ -1647,7 +1716,7 @@ export function ManagerDashboard() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 flex-1">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 flex-1">
           {/* Card 1: Ano */}
           <div className="bg-white px-4 py-2.5 rounded-2xl border border-slate-200 hover:border-blue-400 focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/5 transition-all text-left flex items-center gap-3">
             <div className="text-slate-400 p-1 bg-slate-50 rounded-lg">
@@ -1695,7 +1764,7 @@ export function ManagerDashboard() {
                 className="w-full bg-transparent border-0 text-xs font-bold text-slate-800 focus:ring-0 p-0 outline-none cursor-pointer"
               >
                 <option value="all">Todas as máquinas</option>
-                {uniqueForklifts.map(f => (
+                {scopedForklifts.map(f => (
                   <option key={f.id} value={f.id}>{f.model} ({f.serialNumber})</option>
                 ))}
               </select>
@@ -1718,6 +1787,25 @@ export function ManagerDashboard() {
                 {uniqueOperators.map(o => (
                   <option key={o.id} value={o.id}>{o.name}</option>
                 ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Card 5: Responsabilidade de Manutenção */}
+          <div className="bg-white px-4 py-2.5 rounded-2xl border border-slate-200 hover:border-blue-400 focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/5 transition-all text-left flex items-center gap-3">
+            <div className="text-slate-400 p-1 bg-slate-50 rounded-lg">
+              <Settings2 className="w-4 h-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <label className="block text-[9px] font-black uppercase text-slate-400 tracking-wider">Responsabilidade</label>
+              <select 
+                value={fleetResponsibilityFilter}
+                onChange={(e) => setFleetResponsibilityFilter(e.target.value as any)}
+                className="w-full bg-transparent border-0 text-xs font-bold text-slate-800 focus:ring-0 p-0 outline-none cursor-pointer"
+              >
+                <option value="mechanic">Do Mecânico</option>
+                <option value="other">Sem Mecânico</option>
+                <option value="all">Todas</option>
               </select>
             </div>
           </div>
@@ -1758,7 +1846,7 @@ export function ManagerDashboard() {
                   <span className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider">
                     {(() => {
                       const list = filterForklift === 'all' 
-                        ? uniqueForklifts 
+                        ? scopedForklifts 
                         : uniqueForklifts.filter(f => f.id === filterForklift || (f.serialNumber && filterForklift && f.serialNumber.trim().toLowerCase() === filterForklift.trim().toLowerCase()));
                       return list.length;
                     })()} Máquinas Cadastradas
@@ -1769,10 +1857,47 @@ export function ManagerDashboard() {
                 </div>
               </div>
 
+              {/* Tab Selector by mechanic responsibility */}
+              <div className="flex bg-slate-100 p-1 rounded-2xl max-w-xl mx-auto border border-slate-200 gap-2 mb-2 w-full">
+                <button
+                  onClick={() => setFleetResponsibilityFilter('mechanic')}
+                  className={cn(
+                    "flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer",
+                    fleetResponsibilityFilter === 'mechanic'
+                      ? "bg-slate-900 text-white shadow font-extrabold"
+                      : "text-slate-505 hover:text-slate-805"
+                  )}
+                >
+                  Do Mecânico ({uniqueForklifts.filter(f => f.isMechanicResponsibility !== false).length})
+                </button>
+                <button
+                  onClick={() => setFleetResponsibilityFilter('other')}
+                  className={cn(
+                    "flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer",
+                    fleetResponsibilityFilter === 'other'
+                      ? "bg-slate-900 text-white shadow font-extrabold"
+                      : "text-slate-505 hover:text-slate-805"
+                  )}
+                >
+                  Sem Mecânico ({uniqueForklifts.filter(f => f.isMechanicResponsibility === false).length})
+                </button>
+                <button
+                  onClick={() => setFleetResponsibilityFilter('all')}
+                  className={cn(
+                    "flex-1 py-2 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer",
+                    fleetResponsibilityFilter === 'all'
+                      ? "bg-slate-900 text-white shadow font-extrabold"
+                      : "text-slate-505 hover:text-slate-805"
+                  )}
+                >
+                  Todas ({uniqueForklifts.length})
+                </button>
+              </div>
+
               <div id="active-machines-cards-grid" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
                 {/* Card Principal (Geral / Frota Consolidados) */}
                 {(() => {
-                  const activeStoppedCount = uniqueForklifts.filter(fork => {
+                  const activeStoppedCount = mechanicUniqueForklifts.filter(fork => {
                     const activeStop = activeStops.find(s => s.forkliftId === fork.id && s.status !== 'completed');
                     if (!activeStop) return false;
                     const sev = activeStop.severity || (activeStop.type === 'preventive' ? 'low' : 'high');
@@ -1789,7 +1914,7 @@ export function ManagerDashboard() {
                     const end = parseDateSafe(endDate);
                     const now = new Date();
                     const effectiveEndForPeriod = Math.min(end.getTime(), now.getTime());
-                    const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
+                    const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : (h.status === 'completed' ? startMs : now.getTime());
                     return startMs < effectiveEndForPeriod && hEnd > start.getTime();
                   }).length;
 
@@ -1903,7 +2028,7 @@ export function ManagerDashboard() {
 
                 {(() => {
                   const list = filterForklift === 'all' 
-                    ? uniqueForklifts 
+                    ? scopedForklifts 
                     : uniqueForklifts.filter(f => f.id === filterForklift || (f.serialNumber && filterForklift && f.serialNumber.trim().toLowerCase() === filterForklift.trim().toLowerCase()));
                   
                   return list.map(f => {
@@ -1949,8 +2074,9 @@ export function ManagerDashboard() {
                       const isParada = sev === 'high' || sev === 'critical';
                       if (!isParada) return false;
                       
-                      const startMs = parseDateSafe(h.stopTime).getTime();
-                      const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
+                      const startMs = getStopTimeMs(h);
+                      if (startMs === 0) return false;
+                      const hEnd = getEndTimeMs(h, now.getTime());
                       return startMs <= effectiveEndForPeriod && hEnd >= start.getTime();
                     });
 
@@ -1960,8 +2086,9 @@ export function ManagerDashboard() {
                     // 4. Sum downtime
                     let machineDowntimeMs = 0;
                     machineStops.forEach(h => {
-                      const startMs = parseDateSafe(h.stopTime).getTime();
-                      const hEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
+                      const startMs = getStopTimeMs(h);
+                      if (startMs === 0) return;
+                      const hEnd = getEndTimeMs(h, now.getTime());
                       
                       const effectiveStart = Math.max(start.getTime(), startMs);
                       const effectiveEnd = Math.min(effectiveEndForPeriod, hEnd);
@@ -1981,8 +2108,9 @@ export function ManagerDashboard() {
                     let totalRepairTimeMs = 0;
                     const stopsWithRepairTime = machineStops.filter(h => h.status === 'completed' || h.endTime);
                     stopsWithRepairTime.forEach(h => {
-                      const repairStart = parseDateSafe(h.stopTime).getTime();
-                      const repairEnd = h.endTime ? parseDateSafe(h.endTime).getTime() : now.getTime();
+                      const repairStart = getStopTimeMs(h);
+                      if (repairStart === 0) return;
+                      const repairEnd = getEndTimeMs(h, now.getTime());
                       totalRepairTimeMs += Math.max(0, repairEnd - repairStart);
                     });
                     const mttr = stopsWithRepairTime.length > 0 ? totalRepairTimeMs / stopsWithRepairTime.length : 0;
@@ -2222,7 +2350,14 @@ export function ManagerDashboard() {
                                       )} />
                                       <div className="min-w-0 flex-1 font-sans">
                                         <div className="flex items-center justify-between text-[10px] text-slate-500 font-bold font-sans">
-                                          <span>{formatDate(date)}</span>
+                                          <span>
+                                            {formatDate(date)}
+                                            {isCompleted && event.endTime && (
+                                              <span className="text-[9px] text-slate-400 font-medium ml-1">
+                                                - liberada {formatDate(parseDateSafe(event.endTime))}
+                                              </span>
+                                            )}
+                                          </span>
                                           <span className="capitalize text-[8px] font-black text-indigo-700">{event.type}</span>
                                         </div>
                                         <p className="text-slate-900 font-black truncate pr-1 text-left text-xs mt-0.5" title={event.description}>

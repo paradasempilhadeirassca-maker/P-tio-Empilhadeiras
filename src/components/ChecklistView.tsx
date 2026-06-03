@@ -378,7 +378,9 @@ export function ChecklistView() {
                   {filteredForklifts.length > 0 && (
                     <optgroup label="Sua Frota (Este Turno)">
                       {filteredForklifts.map(f => (
-                        <option key={f.id} value={f.id}>{f.model} {f.serialNumber}</option>
+                        <option key={f.id} value={f.id}>
+                          {f.model} {f.serialNumber}{f.isMechanicResponsibility === false ? ' (Sem Resp. Mecânico)' : ''}
+                        </option>
                       ))}
                     </optgroup>
                   )}
@@ -386,7 +388,9 @@ export function ChecklistView() {
                     {uniqueForklifts
                       .filter(uf => !filteredForklifts.some(ff => ff.id === uf.id))
                       .map(f => (
-                        <option key={f.id} value={f.id}>{f.model} {f.serialNumber}</option>
+                        <option key={f.id} value={f.id}>
+                          {f.model} {f.serialNumber}{f.isMechanicResponsibility === false ? ' (Sem Resp. Mecânico)' : ''}
+                        </option>
                       ))}
                   </optgroup>
                 </select>

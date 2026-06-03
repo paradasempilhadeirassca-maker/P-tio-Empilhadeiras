@@ -9,6 +9,7 @@ import {
   AlertTriangle,
   PlusCircle,
   Package,
+  Briefcase,
   User as UserIcon,
   LogOut,
   ChevronRight,
@@ -224,6 +225,7 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
     manager: [
       { id: 'dashboard', label: 'Dashboard', description: 'Indicadores e KPIs de performance', icon: LayoutDashboard, color: 'bg-blue-500' },
       { id: 'fleet', label: 'Gestão de Frota', description: 'Cadastrar máquinas e operadores', icon: Truck, color: 'bg-slate-800' },
+      { id: 'mechanic-availability', label: 'Disponibilidade do Mecânico', description: 'Escala, presença e impactos', icon: Briefcase, color: 'bg-teal-600' },
       { id: 'checklist', label: 'Check-list Diário', description: 'Inspeção de conformidade diária', icon: ClipboardCheck, color: 'bg-cyan-500' },
       { id: 'op-register', label: 'Registrar Ocorrência', description: 'Abrir nova ordem de manutenção', icon: PlusCircle, color: 'bg-red-500' },
       { id: 'op-active', label: 'Ocorrências Registradas', description: 'Ver frota e eventos em tempo real', icon: AlertTriangle, color: 'bg-amber-500' },
@@ -234,6 +236,7 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
     ],
     leader: [
       { id: 'fleet', label: 'Gestão de Frota', description: 'Cadastrar máquinas e operadores', icon: Truck, color: 'bg-slate-800' },
+      { id: 'mechanic-availability', label: 'Disponibilidade do Mecânico', description: 'Escala, presença e impactos', icon: Briefcase, color: 'bg-teal-600' },
       { id: 'op-register', label: 'Registrar Ocorrência', description: 'Abrir nova ordem de manutenção', icon: PlusCircle, color: 'bg-red-500' },
       { id: 'dashboard', label: 'Dashboard', description: 'Ver indicadores de performance', icon: LayoutDashboard, color: 'bg-blue-500' },
       { id: 'op-active', label: 'Ocorrências Registradas', description: 'Ver frota e eventos em tempo real', icon: AlertTriangle, color: 'bg-amber-500' },
@@ -248,6 +251,7 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
     ],
     mechanic: [
       { id: 'dashboard', label: 'Dashboard', description: 'Ver indicadores de performance', icon: LayoutDashboard, color: 'bg-blue-500' },
+      { id: 'mechanic-availability', label: 'Registrar Minha Presença', description: 'Minha escala, ponto e banco', icon: Briefcase, color: 'bg-teal-600' },
       { id: 'mech-orders', label: 'Iniciar/Finalizar Manutenção', description: 'Trabalhar em ordens abertas', icon: Wrench, color: 'bg-indigo-500' },
       { id: 'mech-preventive', label: 'Manutenção Preventiva', description: 'Ver revisões programadas', icon: ClipboardList, color: 'bg-emerald-500' },
       { id: 'parts-inventory', label: 'Estoque de Peças', description: 'Consultar e ajustar estoque', icon: Package, color: 'bg-orange-500' },

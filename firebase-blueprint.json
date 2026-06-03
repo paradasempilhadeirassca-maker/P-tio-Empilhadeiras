@@ -98,12 +98,63 @@
         "timestamp": { "type": "string", "format": "date-time" },
         "items": { "type": "object" }
       }
+    },
+    "MechanicAvailability": {
+      "title": "Mechanic Availability",
+      "description": "Mechanic availability log, absence reason or extra work.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "mechanicId": { "type": "string" },
+        "mechanicName": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdByName": { "type": "string" },
+        "status": { "type": "string" },
+        "motivo": { "type": "string" },
+        "justificativa": { "type": "string" },
+        "observacoes": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "classification": { "type": "string" }
+      },
+      "required": ["date", "mechanicId", "status"]
+    },
+    "MechanicAttendance": {
+      "title": "Mechanic Attendance",
+      "description": "Clock-in and worked hours log for mechanics.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "mechanicId": { "type": "string" },
+        "mechanicName": { "type": "string" },
+        "entrada": { "type": "string" },
+        "saida": { "type": "string" },
+        "intervaloInicio": { "type": "string" },
+        "intervaloFim": { "type": "string" },
+        "horasTrabalhadas": { "type": "number" },
+        "horasExtras": { "type": "number" },
+        "horasNoturnas": { "type": "number" },
+        "horasFimDeSemana": { "type": "number" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["date", "mechanicId"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "User",
       "description": "User profiles."
+    },
+    "/mechanic_availability/{id}": {
+      "schema": "MechanicAvailability",
+      "description": "Availability logs of the mechanics."
+    },
+    "/mechanic_attendance/{id}": {
+      "schema": "MechanicAttendance",
+      "description": "Mechanics presence/working hours logs."
     },
     "/forklifts/{forkliftId}": {
       "schema": "Forklift",

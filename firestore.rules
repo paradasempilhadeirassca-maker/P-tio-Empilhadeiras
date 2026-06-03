@@ -203,6 +203,16 @@ service cloud.firestore {
       allow create, update, delete: if isManager();
     }
 
+    match /mechanic_availability/{id} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSignedIn();
+    }
+
+    match /mechanic_attendance/{id} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSignedIn();
+    }
+
     match /preventive_executions/{executionId} {
       allow read: if isSignedIn();
       allow create: if isMechanic() || isManager();

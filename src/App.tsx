@@ -17,6 +17,7 @@ import { PreventiveView } from './components/PreventiveView';
 import { PartsInventory } from './components/PartsInventory';
 import { ChecklistView } from './components/ChecklistView';
 import { FleetManagement } from './components/FleetManagement';
+import { MechanicAvailabilityView } from './components/MechanicAvailabilityView';
 import { requestNotificationPermission } from './lib/notifications';
 import { 
   Truck, 
@@ -98,6 +99,7 @@ function AppContent() {
       case 'parts-inventory': return <PartsInventory />;
       case 'checklist': return <ChecklistView />;
       case 'fleet': return <FleetManagement />;
+      case 'mechanic-availability': return <MechanicAvailabilityView />;
       case 'history': {
         const historyRole = (profile.role === 'manager' || profile.role === 'leader') 
           ? 'manager' 

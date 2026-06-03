@@ -37,6 +37,7 @@ export interface Forklift {
   lastHourMeter?: number;
   lastHourMeterUpdate?: string;
   averageDailyUsage?: number;
+  isMechanicResponsibility?: boolean;
 }
 
 export type MaintenanceType = 'corrective' | 'preventive';

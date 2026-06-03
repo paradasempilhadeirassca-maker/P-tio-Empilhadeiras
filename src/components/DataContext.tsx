@@ -126,8 +126,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       if (!serial || serial === '' || serial === 'n/a' || serial === 'teste' || serial === 'test' || serial === '123' || serial === '123456') return false;
       if (!model || model === '' || model === 'n/a' || model === 'teste' || model.includes('teste') || model.includes('demo') || model.includes('test')) return false;
       
-      // Limit to standard fleet serial patterns (serial starting with '91005' or '93006') as indicated by user requirements
-      const isRealFleet = serial.startsWith('91005') || serial.startsWith('93006');
+      // Allow standard fleet serial patterns, OR any other user-registered valid serial (e.g. length >= 4 and not dummy test values)
+      const isRealFleet = serial.startsWith('91005') || serial.startsWith('93006') || (serial.length >= 3 && serial !== '123' && serial !== '999');
       return isRealFleet;
     });
   }, [forklifts, activeStops]);

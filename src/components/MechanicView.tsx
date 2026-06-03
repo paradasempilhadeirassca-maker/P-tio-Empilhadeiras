@@ -172,15 +172,26 @@ export function MechanicView() {
       const maintenanceRef = Firestore.doc(db, 'maintenance', stop.id);
       const forkliftRef = Firestore.doc(db, 'forklifts', stop.forkliftId);
 
-      await Firestore.updateDoc(maintenanceRef, {
+      const p1 = Firestore.updateDoc(maintenanceRef, {
         status: 'in_progress',
         mechanicId: profile.uid,
         startTime: startTime
       });
       
-      await Firestore.updateDoc(forkliftRef, {
+      const p2 = Firestore.updateDoc(forkliftRef, {
         status: 'maintenance'
       });
+
+      const result = await Promise.race([
+        Promise.all([p1, p2]),
+        new Promise(resolve => setTimeout(() => resolve('offline_timeout'), 2500))
+      ]);
+
+      if (result === 'offline_timeout') {
+        showToast('Iniciado localmente (Modo Offline). Será sincronizado quando a rede retornar.', 'info');
+      } else {
+        showToast('Manutenção iniciada!');
+      }
 
       // Update local state immediately for offline responsiveness
       const updatedStops = activeStops.map(s => 
@@ -299,11 +310,24 @@ export function MechanicView() {
       };
       if (hmVal !== null) {
         forkliftUpdates.lastHourMeter = hmVal;
+        if (stop.type === 'preventive') {
+          forkliftUpdates.lastPreventiveHorometer = hmVal;
+          forkliftUpdates.nextPreventiveHorometer = hmVal + 500;
+        }
       }
 
       batch.update(Firestore.doc(db, 'forklifts', stop.forkliftId), forkliftUpdates);
 
-      await batch.commit();
+      const result = await Promise.race([
+        batch.commit(),
+        new Promise(resolve => setTimeout(() => resolve('offline_timeout'), 2500))
+      ]);
+
+      if (result === 'offline_timeout') {
+        showToast('Finalizado localmente (Modo Offline). Será sincronizado ao conectar.', 'info');
+      } else {
+        showToast('Manutenção finalizada!');
+      }
 
       // Update local state
       const updatedStops = activeStops.filter(s => s.id !== stop.id);
@@ -313,7 +337,13 @@ export function MechanicView() {
               ...f, 
               status: targetStatus, 
               lastMaintenance: endTime, 
-              ...(hmVal !== null ? { lastHourMeter: hmVal } : {}) 
+              ...(hmVal !== null ? { 
+                lastHourMeter: hmVal,
+                ...(stop.type === 'preventive' ? {
+                  lastPreventiveHorometer: hmVal,
+                  nextPreventiveHorometer: hmVal + 500
+                } : {})
+              } : {}) 
             } 
           : f
       );
@@ -326,7 +356,6 @@ export function MechanicView() {
       localStorage.setItem(CACHE_KEYS.FORKLIFTS, JSON.stringify({ data: updatedForklifts, timestamp: Date.now() }));
 
       refreshGlobalData(true);
-      showToast('Manutenção finalizada!');
       
       setSelectedStop(null);
       setParts([]);
@@ -358,7 +387,7 @@ export function MechanicView() {
       const maintenanceRef = Firestore.doc(db, 'maintenance', stop.id);
       const forkliftRef = Firestore.doc(db, 'forklifts', stop.forkliftId);
 
-      await Firestore.updateDoc(maintenanceRef, {
+      const p1 = Firestore.updateDoc(maintenanceRef, {
         status: 'awaiting_parts',
         waitingPartsStartTime: nowIso,
         pendingPartsList: pieces.split(',').map(p => p.trim())
@@ -380,9 +409,20 @@ export function MechanicView() {
         }
       }
 
-      await Firestore.updateDoc(forkliftRef, {
+      const p2 = Firestore.updateDoc(forkliftRef, {
         status: targetStatus
       });
+
+      const result = await Promise.race([
+        Promise.all([p1, p2]),
+        new Promise(resolve => setTimeout(() => resolve('offline_timeout'), 2500))
+      ]);
+
+      if (result === 'offline_timeout') {
+         showToast('Pausado localmente (Modo Offline). Será sincronizado ao conectar.', 'info');
+      } else {
+         showToast('Status alterado: Aguardando Peças');
+      }
 
       // Update local state immediately for offline responsiveness
       const piecesList = pieces.split(',').map(p => p.trim());
@@ -400,7 +440,6 @@ export function MechanicView() {
       localStorage.setItem(CACHE_KEYS.MAINTENANCE, JSON.stringify({ data: updatedStops, timestamp: Date.now() }));
       localStorage.setItem(CACHE_KEYS.FORKLIFTS, JSON.stringify({ data: updatedForklifts, timestamp: Date.now() }));
 
-      showToast('Status alterado: Aguardando Peças');
       setSelectedStop(prev => prev ? { 
         ...prev, 
         status: 'awaiting_parts', 
@@ -425,15 +464,26 @@ export function MechanicView() {
       const maintenanceRef = Firestore.doc(db, 'maintenance', stop.id);
       const forkliftRef = Firestore.doc(db, 'forklifts', stop.forkliftId);
 
-      await Firestore.updateDoc(maintenanceRef, {
+      const p1 = Firestore.updateDoc(maintenanceRef, {
         status: 'in_progress',
         totalWaitingPartsMinutes: Firestore.increment(waitingMinutes),
         waitingPartsStartTime: null
       });
 
-      await Firestore.updateDoc(forkliftRef, {
+      const p2 = Firestore.updateDoc(forkliftRef, {
         status: 'maintenance'
       });
+
+      const result = await Promise.race([
+        Promise.all([p1, p2]),
+        new Promise(resolve => setTimeout(() => resolve('offline_timeout'), 2500))
+      ]);
+
+      if (result === 'offline_timeout') {
+         showToast('Manutenção retomada localmente (Modo Offline). Será sincronizado.', 'info');
+      } else {
+         showToast('Manutenção retomada!');
+      }
 
       // Update local state immediately for offline responsiveness
       const updatedStops = activeStops.map(s => 
@@ -455,7 +505,6 @@ export function MechanicView() {
       localStorage.setItem(CACHE_KEYS.MAINTENANCE, JSON.stringify({ data: updatedStops, timestamp: Date.now() }));
       localStorage.setItem(CACHE_KEYS.FORKLIFTS, JSON.stringify({ data: updatedForklifts, timestamp: Date.now() }));
 
-      showToast('Manutenção retomada!');
       setSelectedStop(prev => prev ? { 
         ...prev, 
         status: 'in_progress',
@@ -490,6 +539,7 @@ export function MechanicView() {
       const matchesStatus = filterStatus === 'all' || s.status === filterStatus;
       const matchesSeverity = filterSeverity === 'all' || s.severity === filterSeverity;
       const forklift = forklifts.find(f => f.id === s.forkliftId);
+      if (forklift && forklift.isMechanicResponsibility === false) return false;
       const forkliftLabel = ((forklift?.model || '') + ' ' + (forklift?.serialNumber || '')).toLowerCase();
       const matchesSearch = forkliftLabel.includes(searchTerm.toLowerCase()) || 
                            (s.description || '').toLowerCase().includes(searchTerm.toLowerCase());
@@ -696,11 +746,14 @@ function OccurrenceCard({ stop, forklift, onSelect, downtime, responseTime }: an
             <div className="flex gap-2">
                 <span className={cn(
                   "text-[8px] font-black uppercase px-2 py-0.5 rounded",
+                  stop.type === 'preventive' ? "bg-purple-100 text-purple-700 font-bold" :
                   isHigh ? "bg-red-50 text-red-600" : 
                   isMedium ? "bg-amber-50 text-amber-600" : 
                   "bg-emerald-50 text-emerald-600"
                 )}>
-                  {isHigh ? 'Q - QUEBRA CRÍTICA' : isMedium ? 'I - FALHA IMINENTE' : 'R - REPARO NORMAL'}
+                  {stop.type === 'preventive' 
+                    ? 'P - DESVIO / PREVENTIVA' 
+                    : (isHigh ? 'Q - QUEBRA CRÍTICA' : isMedium ? 'I - FALHA IMINENTE' : 'R - REPARO NORMAL')}
                 </span>
                 {isInWork && (
                   <span className="bg-blue-500 text-white text-[8px] font-black px-2 py-0.5 rounded animate-pulse">EM MANUTENÇÃO</span>
