@@ -46,6 +46,7 @@ export function PreventiveView() {
   const [filterType, setFilterType] = useState<ForkliftType | 'all'>('all');
   const [filterStatus, setFilterStatus] = useState<string | 'all'>('all');
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [responsibilityTab, setResponsibilityTab] = useState<'mechanic' | 'non_mechanic'>('mechanic');
   
   // Execution Modal States
   const [selectedForklift, setSelectedForklift] = useState<Forklift | null>(null);
@@ -69,14 +70,37 @@ export function PreventiveView() {
     }
   };
 
+  // Deduplicate duplicate 8640001 entries as requested by user
+  const deduplicatedForklifts = useMemo(() => {
+    const seenSerials = new Set<string>();
+    return uniqueForklifts.filter(f => {
+      const serial = (f.serialNumber || '').trim().toLowerCase();
+      if (serial === '8640001' || serial.startsWith('8640001')) {
+        if (seenSerials.has('8640001')) {
+          return false; // Remove / retire second one
+        }
+        seenSerials.add('8640001');
+        return true;
+      }
+      return true;
+    });
+  }, [uniqueForklifts]);
+
+  // Compute counts for tab labels
+  const tabCounts = useMemo(() => {
+    const mechanic = deduplicatedForklifts.filter(f => f.isMechanicResponsibility !== false).length;
+    const nonMechanic = deduplicatedForklifts.filter(f => f.isMechanicResponsibility === false).length;
+    return { mechanic, nonMechanic };
+  }, [deduplicatedForklifts]);
+
   const stats = useMemo(() => {
-    const total = uniqueForklifts.length;
+    const total = deduplicatedForklifts.length;
     let vencidas = 0;
     let proximas = 0;
     let emDia = 0;
     let desatualizadas = 0;
 
-    uniqueForklifts.forEach(f => {
+    deduplicatedForklifts.forEach(f => {
       const status = getMaintenanceStatus(f.lastHourMeter || 0, f.nextPreventiveHorometer || 0, f.lastHourMeterUpdate);
       if (status === 'vencida') vencidas++;
       else if (status === 'proxima') proximas++;
@@ -85,10 +109,15 @@ export function PreventiveView() {
     });
 
     return { total, vencidas, proximas, emDia, desatualizadas };
-  }, [uniqueForklifts]);
+  }, [deduplicatedForklifts]);
 
   const filteredForklifts = useMemo(() => {
-    return uniqueForklifts.filter(f => {
+    return deduplicatedForklifts.filter(f => {
+      // Responsibility filter
+      const matchesResponsibility = responsibilityTab === 'mechanic' 
+        ? f.isMechanicResponsibility !== false 
+        : f.isMechanicResponsibility === false;
+
       const matchesSearch = f.serialNumber.toLowerCase().includes(searchQuery.toLowerCase()) || 
                            f.model.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesType = filterType === 'all' || f.type === filterType;
@@ -96,7 +125,7 @@ export function PreventiveView() {
       const machineStatus = getMaintenanceStatus(f.lastHourMeter || 0, f.nextPreventiveHorometer || 0, f.lastHourMeterUpdate);
       const matchesStatus = filterStatus === 'all' || machineStatus === filterStatus;
 
-      return matchesSearch && matchesType && matchesStatus;
+      return matchesResponsibility && matchesSearch && matchesType && matchesStatus;
     }).sort((a, b) => {
       const statusA = getMaintenanceStatus(a.lastHourMeter || 0, a.nextPreventiveHorometer || 0, a.lastHourMeterUpdate);
       const statusB = getMaintenanceStatus(b.lastHourMeter || 0, b.nextPreventiveHorometer || 0, b.lastHourMeterUpdate);
@@ -104,7 +133,7 @@ export function PreventiveView() {
       const priority: Record<string, number> = { vencida: 0, desatualizado: 1, proxima: 2, em_dia: 3 };
       return (priority[statusA] ?? 4) - (priority[statusB] ?? 4);
     });
-  }, [uniqueForklifts, searchQuery, filterType, filterStatus]);
+  }, [deduplicatedForklifts, responsibilityTab, searchQuery, filterType, filterStatus]);
 
   useEffect(() => {
     if (selectedForklift) {
@@ -336,6 +365,34 @@ export function PreventiveView() {
                 </div>
               </motion.div>
             ))}
+          </div>
+
+          {/* TAB SELECTOR: RESPONSABILIDADE DO MECÂNICO */}
+          <div className="flex gap-4 mt-8 border-b border-slate-100 pb-0">
+            <button
+              onClick={() => setResponsibilityTab('mechanic')}
+              className={cn(
+                "pb-4 px-2 text-xs font-black uppercase tracking-wider border-b-4 transition-all relative",
+                responsibilityTab === 'mechanic' ? "border-slate-900 text-slate-900" : "border-transparent text-slate-400 hover:text-slate-600"
+              )}
+            >
+              Responsabilidade do Mecânico
+              <span className="ml-2 px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full text-[9px] font-black">
+                {tabCounts.mechanic}
+              </span>
+            </button>
+            <button
+              onClick={() => setResponsibilityTab('non_mechanic')}
+              className={cn(
+                "pb-4 px-2 text-xs font-black uppercase tracking-wider border-b-4 transition-all relative",
+                responsibilityTab === 'non_mechanic' ? "border-slate-900 text-slate-900" : "border-transparent text-slate-400 hover:text-slate-600"
+              )}
+            >
+              Sem Responsabilidade do Mecânico
+              <span className="ml-2 px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full text-[9px] font-black animate-pulse">
+                {tabCounts.nonMechanic}
+              </span>
+            </button>
           </div>
         </div>
       </header>

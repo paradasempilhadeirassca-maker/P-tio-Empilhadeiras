@@ -88,7 +88,8 @@ export function MechanicAvailabilityView() {
     'Ausente',
     'Demanda Pessoal',
     'Atendimento Externo',
-    'Atestado'
+    'Atestado',
+    'Feriado'
   ];
 
   // Listener for complete user database to map and fallback names securely
@@ -268,9 +269,17 @@ export function MechanicAvailabilityView() {
     });
   }, [absences, filterMonth, filterYear]);
 
-  // Total Absences in the Month in days
+  // Total Feriados in the month in days
+  const totalHolidaysThisMonth = useMemo(() => {
+    const holidayRecords = currentMonthAbsences.filter(a => a.motivo === 'Feriado');
+    const dates = new Set(holidayRecords.map(a => a.date));
+    return dates.size;
+  }, [currentMonthAbsences]);
+
+  // Total Absences in the Month in days (excluding Feriado)
   const totalDaysAbsentThisMonth = useMemo(() => {
-    const dates = new Set(currentMonthAbsences.map(a => a.date));
+    const nonHolidayRecords = currentMonthAbsences.filter(a => a.motivo !== 'Feriado');
+    const dates = new Set(nonHolidayRecords.map(a => a.date));
     return dates.size;
   }, [currentMonthAbsences]);
 
@@ -308,12 +317,13 @@ export function MechanicAvailabilityView() {
     }
   }, [filterMonth, filterYear]);
 
-  // Monthly Mechanic Availability % (calculated incrementally based on elapsed working days)
+  // Monthly Mechanic Availability % (calculated incrementally based on elapsed working days subtracting holidays)
   const monthlyAvailabilityPercentage = useMemo(() => {
-    const daysAbsent = Math.min(elapsedWorkingDays, totalDaysAbsentThisMonth);
-    const availableDays = elapsedWorkingDays - daysAbsent;
-    return Number(((availableDays / elapsedWorkingDays) * 100).toFixed(1));
-  }, [elapsedWorkingDays, totalDaysAbsentThisMonth]);
+    const adjustedElapsedDays = Math.max(1, elapsedWorkingDays - totalHolidaysThisMonth);
+    const daysAbsent = Math.min(adjustedElapsedDays, totalDaysAbsentThisMonth);
+    const availableDays = adjustedElapsedDays - daysAbsent;
+    return Number(((availableDays / adjustedElapsedDays) * 100).toFixed(1));
+  }, [elapsedWorkingDays, totalHolidaysThisMonth, totalDaysAbsentThisMonth]);
 
   // Recharts Donut data: Availability vs Absences
   const donutChartData = useMemo(() => {
@@ -358,7 +368,11 @@ export function MechanicAvailabilityView() {
         return absDate.getMonth() === index && absDate.getFullYear() === filterYear;
       });
 
-      const uniqueDays = new Set(monthAbs.map(a => a.date)).size;
+      const nonHolidayAbs = monthAbs.filter(a => a.motivo !== 'Feriado');
+      const uniqueDaysAbsent = new Set(nonHolidayAbs.map(a => a.date)).size;
+
+      const holidayAbs = monthAbs.filter(a => a.motivo === 'Feriado');
+      const uniqueHolidays = new Set(holidayAbs.map(a => a.date)).size;
 
       let monthLimitWorkingDays = 1;
       if (filterYear < currentYear || (filterYear === currentYear && index < currentMonth)) {
@@ -372,8 +386,9 @@ export function MechanicAvailabilityView() {
         monthLimitWorkingDays = getWeekdaysInMonth(filterYear, index);
       }
 
-      const daysAbsent = Math.min(monthLimitWorkingDays, uniqueDays);
-      const finalPercentage = Math.max(0, Math.min(100, Number((((monthLimitWorkingDays - daysAbsent) / monthLimitWorkingDays) * 100).toFixed(1))));
+      const adjustedWorkingDays = Math.max(1, monthLimitWorkingDays - uniqueHolidays);
+      const daysAbsent = Math.min(adjustedWorkingDays, uniqueDaysAbsent);
+      const finalPercentage = Math.max(0, Math.min(100, Number((((adjustedWorkingDays - daysAbsent) / adjustedWorkingDays) * 100).toFixed(1))));
 
       // Future month defaults to 100 if no current record exists
       const isFuture = index > currentMonth && filterYear === currentYear;
@@ -382,7 +397,7 @@ export function MechanicAvailabilityView() {
       return {
         name: m,
         Disponibilidade: displayVal,
-        Ausencias: uniqueDays
+        Ausencias: uniqueDaysAbsent
       };
     });
   }, [absences, filterYear]);
@@ -484,7 +499,7 @@ export function MechanicAvailabilityView() {
             <div className="text-xs text-slate-500 font-semibold max-w-md leading-relaxed space-y-1.5">
               <p>Proporção de tempo em que a equipe mecânica esteve regularizada na safra.</p>
               <p className="text-[10px] text-slate-400 font-bold uppercase leading-snug">
-                Base de {elapsedWorkingDays} {elapsedWorkingDays === 1 ? 'dia útil transcorrido' : 'dias úteis transcorridos'} no mês selecionado. Cada dia de ausência cadastrado subtrai 1 dia útil de assistência direta na fábrica.
+                Base de {elapsedWorkingDays - totalHolidaysThisMonth} {(elapsedWorkingDays - totalHolidaysThisMonth) === 1 ? 'dia útil ativo transcorrido' : 'dias úteis ativos transcorridos'} no mês selecionado{totalHolidaysThisMonth > 0 ? ` (já deduzidos ${totalHolidaysThisMonth} feriados neutros)` : ''}.
               </p>
             </div>
           </div>
@@ -808,6 +823,7 @@ export function MechanicAvailabilityView() {
                               abs.motivo === 'Demanda Pessoal' ? "bg-amber-50 text-amber-700 border-amber-100" :
                               abs.motivo === 'Atendimento Externo' ? "bg-sky-50 text-sky-700 border-sky-100" :
                               abs.motivo === 'Atestado' ? "bg-rose-50 text-rose-700 border-rose-100" :
+                              abs.motivo === 'Feriado' ? "bg-purple-100 text-purple-800 border-purple-200" :
                               "bg-slate-50 text-slate-700 border-slate-200"
                             )}>
                               {abs.motivo}

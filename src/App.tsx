@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { AuthProvider, useAuth, LoginScreen } from './components/Auth';
-import { DataProvider } from './components/DataContext';
+import { DataProvider, useData } from './components/DataContext';
 import { ToastProvider } from './components/ToastContext';
 import { OperatorView } from './components/OperatorView';
 import { MechanicView } from './components/MechanicView';
@@ -18,7 +18,7 @@ import { PartsInventory } from './components/PartsInventory';
 import { ChecklistView } from './components/ChecklistView';
 import { FleetManagement } from './components/FleetManagement';
 import { MechanicAvailabilityView } from './components/MechanicAvailabilityView';
-import { requestNotificationPermission } from './lib/notifications';
+import { requestNotificationPermission, sendLocalNotification } from './lib/notifications';
 import { 
   Truck, 
   ArrowLeft,
@@ -29,8 +29,44 @@ import {
 
 function AppContent() {
   const { user, profile, loading, logout, quotaExceeded, setQuotaExceeded } = useAuth();
+  const { uniqueForklifts } = useData();
   const [activeView, setActiveView] = useState<string>('menu');
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
+
+  useEffect(() => {
+    if (!loading && uniqueForklifts && uniqueForklifts.length > 0) {
+      // Find forklifts that are overdue (vencida) or near overdue (< 50h)
+      const overdueList = uniqueForklifts.filter(f => {
+        if (!f.nextPreventiveHorometer || !f.lastHourMeter) return false;
+        const remaining = f.nextPreventiveHorometer - f.lastHourMeter;
+        return remaining <= 0; // Vencida
+      });
+      const nearOverdueList = uniqueForklifts.filter(f => {
+        if (!f.nextPreventiveHorometer || !f.lastHourMeter) return false;
+        const remaining = f.nextPreventiveHorometer - f.lastHourMeter;
+        return remaining > 0 && remaining <= 50; // Próxima do vencimento
+      });
+
+      if (overdueList.length > 0 || nearOverdueList.length > 0) {
+        const alreadyNotified = sessionStorage.getItem('notified_preventives');
+        if (!alreadyNotified) {
+          sessionStorage.setItem('notified_preventives', 'true');
+          
+          let title = "📅 REVISÕES PREVENTIVAS";
+          let body = "";
+          
+          if (overdueList.length > 0) {
+            body += `⚠️ VENCIDAS (${overdueList.length}): ${overdueList.map(f => f.serialNumber).join(', ')}\n`;
+          }
+          if (nearOverdueList.length > 0) {
+            body += `⏳ PRÓXIMAS VENCER (${nearOverdueList.length}): ${nearOverdueList.map(f => f.serialNumber).join(', ')}`;
+          }
+          
+          sendLocalNotification(title, body).catch(console.error);
+        }
+      }
+    }
+  }, [uniqueForklifts, loading]);
 
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
@@ -99,7 +135,12 @@ function AppContent() {
       case 'parts-inventory': return <PartsInventory />;
       case 'checklist': return <ChecklistView />;
       case 'fleet': return <FleetManagement />;
-      case 'mechanic-availability': return <MechanicAvailabilityView />;
+      case 'mechanic-availability': {
+        if (profile.role !== 'manager' && profile.role !== 'leader') {
+          return <div className="p-8 text-center text-red-500 font-black uppercase tracking-wider">Acesso Restrito ao Gestor</div>;
+        }
+        return <MechanicAvailabilityView />;
+      }
       case 'history': {
         const historyRole = (profile.role === 'manager' || profile.role === 'leader') 
           ? 'manager' 

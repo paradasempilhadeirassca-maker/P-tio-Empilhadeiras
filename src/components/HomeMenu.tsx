@@ -251,7 +251,6 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
     ],
     mechanic: [
       { id: 'dashboard', label: 'Dashboard', description: 'Ver indicadores de performance', icon: LayoutDashboard, color: 'bg-blue-500' },
-      { id: 'mechanic-availability', label: 'Registrar Minha Presença', description: 'Minha escala, ponto e banco', icon: Briefcase, color: 'bg-teal-600' },
       { id: 'mech-orders', label: 'Iniciar/Finalizar Manutenção', description: 'Trabalhar em ordens abertas', icon: Wrench, color: 'bg-indigo-500' },
       { id: 'mech-preventive', label: 'Manutenção Preventiva', description: 'Ver revisões programadas', icon: ClipboardList, color: 'bg-emerald-500' },
       { id: 'parts-inventory', label: 'Estoque de Peças', description: 'Consultar e ajustar estoque', icon: Package, color: 'bg-orange-500' },

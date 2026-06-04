@@ -3132,7 +3132,7 @@ export function ManagerDashboard() {
             </div>
 
             {/* Seção 3: Indisponibilidade de Mecânicos & Gestão de Escala */}
-            {(profile?.role === 'manager' || profile?.role === 'leader') && (
+            {false && (
               <div id="section-mechanic-unavailability" className="space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
                 <div className="flex items-center gap-2">

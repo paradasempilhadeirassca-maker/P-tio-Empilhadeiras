@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { cn, formatDuration } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/firebaseUtils';
-import { sendWhatsAppNotification } from '../lib/notifications';
+import { sendWhatsAppNotification, sendLocalNotification } from '../lib/notifications';
 
 // Helper to calculate minutes between two dates
 const diffInMinutes = (t1: string | Date | any, t2: string | Date | any) => {
@@ -213,6 +213,11 @@ export function MechanicView() {
       const forklift = forklifts.find(f => f.id === stop.forkliftId);
       const machineName = forklift ? `${forklift.model} ${forklift.serialNumber}` : 'Máquina';
       
+      sendLocalNotification(
+        `🔧 MANUTENÇÃO INICIADA`,
+        `Máquina: ${machineName}\nMecânico: ${profile.displayName || profile.email}`
+      );
+
       sendWhatsAppNotification(
         `🔧 *MANUTENÇÃO INICIADA*\n\n` +
         `*Máquina:* ${machineName}\n` +
@@ -365,6 +370,12 @@ export function MechanicView() {
 
       const forklift = forklifts.find(f => f.id === stop.forkliftId);
       const machineName = forklift ? `${forklift.model} ${forklift.serialNumber}` : 'Máquina';
+      
+      sendLocalNotification(
+        `✅ MANUTENÇÃO FINALIZADA`,
+        `Máquina: ${machineName}\nMecânico: ${profile.displayName || profile.email}\nReparo: ${repairNotes}`
+      );
+
       sendWhatsAppNotification(`✅ *MANUTENÇÃO CONCLUÍDA*\n\nMáquina: ${machineName}\nStatus: Disponível\nNotas: ${repairNotes}`);
 
     } catch (error) {

@@ -50,6 +50,7 @@ export function FleetManagement({ onReportOccurrence }: { onReportOccurrence?: (
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [responsibilityTab, setResponsibilityTab] = useState<'mechanic' | 'other'>('mechanic');
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   // Form state for new machine
   const [formData, setFormData] = useState({
@@ -143,14 +144,14 @@ export function FleetManagement({ onReportOccurrence }: { onReportOccurrence?: (
   };
 
   const handleDeleteMachine = async (id: string) => {
-    if (!confirm('Tem certeza que deseja excluir esta máquina?')) return;
-
     try {
       await deleteDoc(doc(db, 'forklifts', id));
       await refreshGlobalData(true);
       showToast('Máquina excluída com sucesso!');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, 'forklifts');
+    } finally {
+      setDeleteConfirmId(null);
     }
   };
 
@@ -432,7 +433,7 @@ export function FleetManagement({ onReportOccurrence }: { onReportOccurrence?: (
                          </button>
                        )}
                        <button 
-                        onClick={() => handleDeleteMachine(f.id)}
+                        onClick={() => setDeleteConfirmId(f.id)}
                         className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -779,6 +780,46 @@ export function FleetManagement({ onReportOccurrence }: { onReportOccurrence?: (
           </motion.div>
         </div>
       )}
+      </AnimatePresence>
+
+      {/* Custom Delete Confirmation Modal */}
+      <AnimatePresence>
+        {deleteConfirmId && (
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-md z-[110] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-[2.5rem] w-full max-w-sm shadow-2xl p-8 text-center space-y-6 border border-slate-100"
+            >
+              <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto text-red-500">
+                <Trash2 className="w-8 h-8" />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">Excluir Máquina?</h3>
+                <p className="text-xs text-slate-500 font-semibold leading-relaxed">
+                  Tem certeza que deseja excluir esta máquina? Esta ação é permanente e removerá todo o histórico associado.
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <button 
+                  type="button"
+                  onClick={() => setDeleteConfirmId(null)}
+                  className="flex-1 py-3.5 bg-slate-100 text-slate-600 font-black rounded-2xl hover:bg-slate-200 transition-all uppercase text-[10px] tracking-wider"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => handleDeleteMachine(deleteConfirmId)}
+                  className="flex-1 py-3.5 bg-red-600 text-white font-black rounded-2xl hover:bg-red-700 transition-all uppercase text-[10px] tracking-wider shadow-lg shadow-red-100"
+                >
+                  Confirmar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
       </AnimatePresence>
     </div>
   );
