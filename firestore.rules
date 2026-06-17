@@ -218,5 +218,13 @@ service cloud.firestore {
       allow create: if isMechanic() || isManager();
       allow update, delete: if isManager();
     }
+
+    match /system_settings/{id} {
+      allow read, write: if true;
+    }
+
+    match /push_subscriptions/{id} {
+      allow read, write: if true;
+    }
   }
 }

@@ -4,7 +4,6 @@ import path from "path";
 import twilio from "twilio";
 import dotenv from "dotenv";
 import admin from "firebase-admin";
-import { getFirestore } from "firebase-admin/firestore";
 import webpush from "web-push";
 import fs from "fs";
 
@@ -22,7 +21,150 @@ if (admin.apps.length === 0) {
   });
 }
 
-const firestoreDb = getFirestore(firebaseConfig.firestoreDatabaseId);
+// REST-based Firestore client to bypass IAM permission limitations in Sandbox environments
+const FIRESTORE_BASE_URL = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${firebaseConfig.firestoreDatabaseId}/documents`;
+const FIRESTORE_API_KEY = firebaseConfig.apiKey;
+
+function toFirestoreFields(obj: any): any {
+  const fields: any = {};
+  for (const [key, val] of Object.entries(obj)) {
+    if (val === null || val === undefined) {
+      continue;
+    }
+    if (typeof val === 'string') {
+      fields[key] = { stringValue: val };
+    } else if (typeof val === 'number') {
+      fields[key] = { doubleValue: val };
+    } else if (typeof val === 'boolean') {
+      fields[key] = { booleanValue: val };
+    } else if (typeof val === 'object') {
+      if (val instanceof Date) {
+        fields[key] = { timestampValue: val.toISOString() };
+      } else if (Array.isArray(val)) {
+        fields[key] = toFirestoreArrayValue(val);
+      } else {
+        fields[key] = { mapValue: { fields: toFirestoreFields(val) } };
+      }
+    }
+  }
+  return fields;
+}
+
+function toFirestoreArrayValue(arr: any[]): any {
+  return {
+    arrayValue: {
+      values: arr.map(item => {
+        if (typeof item === 'string') return { stringValue: item };
+        if (typeof item === 'number') return { doubleValue: item };
+        if (typeof item === 'boolean') return { booleanValue: item };
+        if (typeof item === 'object') return { mapValue: { fields: toFirestoreFields(item) } };
+        return { stringValue: String(item) };
+      })
+    }
+  };
+}
+
+function fromFirestoreFields(fields: any): any {
+  if (!fields) return {};
+  const res: any = {};
+  for (const [key, val] of Object.entries(fields)) {
+    const v = val as any;
+    if ('stringValue' in v) {
+      res[key] = v.stringValue;
+    } else if ('doubleValue' in v) {
+      res[key] = Number(v.doubleValue);
+    } else if ('integerValue' in v) {
+      res[key] = Number(v.integerValue);
+    } else if ('booleanValue' in v) {
+      res[key] = v.booleanValue;
+    } else if ('timestampValue' in v) {
+      res[key] = v.timestampValue;
+    } else if ('mapValue' in v && v.mapValue && v.mapValue.fields) {
+      res[key] = fromFirestoreFields(v.mapValue.fields);
+    } else if ('arrayValue' in v && v.arrayValue && v.arrayValue.values) {
+      res[key] = v.arrayValue.values.map((item: any) => {
+        if ('stringValue' in item) return item.stringValue;
+        if ('doubleValue' in item) return Number(item.doubleValue);
+        if ('integerValue' in item) return Number(item.integerValue);
+        if ('booleanValue' in item) return item.booleanValue;
+        if ('mapValue' in item && item.mapValue && item.mapValue.fields) {
+          return fromFirestoreFields(item.mapValue.fields);
+        }
+        return item;
+      });
+    }
+  }
+  return res;
+}
+
+async function getDocRest(collectionName: string, docId: string) {
+  const url = `${FIRESTORE_BASE_URL}/${collectionName}/${docId}?key=${FIRESTORE_API_KEY}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    if (response.status === 404) {
+      return null;
+    }
+    const errBody = await response.text();
+    throw new Error(`Firestore REST GET failed with status ${response.status}: ${errBody}`);
+  }
+  const data = await response.json();
+  return {
+    id: docId,
+    exists: true,
+    data: () => fromFirestoreFields(data.fields)
+  };
+}
+
+async function setDocRest(collectionName: string, docId: string, data: any) {
+  const url = `${FIRESTORE_BASE_URL}/${collectionName}/${docId}?key=${FIRESTORE_API_KEY}`;
+  const payload = {
+    fields: toFirestoreFields(data)
+  };
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    const errBody = await response.text();
+    throw new Error(`Firestore REST PATCH failed with status ${response.status}: ${errBody}`);
+  }
+  return true;
+}
+
+async function getDocsRest(collectionName: string) {
+  const url = `${FIRESTORE_BASE_URL}/${collectionName}?key=${FIRESTORE_API_KEY}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    const errBody = await response.text();
+    throw new Error(`Firestore REST GET collection failed with status ${response.status}: ${errBody}`);
+  }
+  const result = await response.json();
+  const documents = result.documents || [];
+  return {
+    size: documents.length,
+    docs: documents.map((doc: any) => {
+      const nameParts = doc.name.split('/');
+      const id = nameParts[nameParts.length - 1];
+      return {
+        id,
+        ref: {
+          delete: async () => {
+            const deleteUrl = `${FIRESTORE_BASE_URL}/${collectionName}/${id}?key=${FIRESTORE_API_KEY}`;
+            const delRes = await fetch(deleteUrl, { method: 'DELETE' });
+            if (!delRes.ok) {
+              const delErr = await delRes.text();
+              throw new Error(`Firestore REST DELETE failed: ${delErr}`);
+            }
+          }
+        },
+        data: () => fromFirestoreFields(doc.fields)
+      };
+    })
+  };
+}
 
 // Setup Web Push with Firestore persistent VAPID keypair
 let vapidPublicKey = process.env.VAPID_PUBLIC_KEY || "";
@@ -39,9 +181,8 @@ async function initVapidKeys() {
   }
 
   try {
-    const docRef = firestoreDb.collection("system_settings").doc("vapid_keys");
-    const doc = await docRef.get();
-    if (doc.exists) {
+    const doc = await getDocRest("system_settings", "vapid_keys");
+    if (doc && doc.exists) {
       const data = doc.data();
       if (data && data.publicKey && data.privateKey) {
         vapidPublicKey = data.publicKey;
@@ -61,10 +202,10 @@ async function initVapidKeys() {
     vapidPublicKey = keys.publicKey;
     vapidPrivateKey = keys.privateKey;
 
-    await docRef.set({
+    await setDocRest("system_settings", "vapid_keys", {
       publicKey: vapidPublicKey,
       privateKey: vapidPrivateKey,
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
+      createdAt: new Date().toISOString()
     });
 
     webpush.setVapidDetails(
@@ -170,12 +311,11 @@ async function startServer() {
       // Encode it as a safe base64url string to make a clean doc ID
       const safeDocId = Buffer.from(subscription.endpoint).toString('base64url');
       
-      const subRef = firestoreDb.collection("push_subscriptions").doc(safeDocId);
-      await subRef.set({
+      await setDocRest("push_subscriptions", safeDocId, {
         subscription,
-        userId: userId || null,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
+        userId: userId || "",
+        updatedAt: new Date().toISOString()
+      });
 
       res.json({ success: true });
     } catch (error: any) {
@@ -192,10 +332,10 @@ async function startServer() {
     }
 
     try {
-      const snapshot = await firestoreDb.collection("push_subscriptions").get();
+      const snapshot = await getDocsRest("push_subscriptions");
       const payload = JSON.stringify({ title, body: body || "" });
 
-      const sendPromises = snapshot.docs.map(async (doc) => {
+      const sendPromises = snapshot.docs.map(async (doc: any) => {
         const subData = doc.data();
         try {
           await webpush.sendNotification(subData.subscription, payload);
