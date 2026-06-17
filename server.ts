@@ -24,42 +24,90 @@ if (admin.apps.length === 0) {
 
 const firestoreDb = getFirestore(firebaseConfig.firestoreDatabaseId);
 
-// Setup Web Push and load/generate VAPID keypair
-const VAPID_KEYS_FILE = path.join(process.cwd(), ".vapid-keys.json");
-let vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
-let vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
+// Setup Web Push with Firestore persistent VAPID keypair
+let vapidPublicKey = process.env.VAPID_PUBLIC_KEY || "";
+let vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || "";
 
-if (!vapidPublicKey || !vapidPrivateKey) {
-  if (fs.existsSync(VAPID_KEYS_FILE)) {
-    try {
-      const keys = JSON.parse(fs.readFileSync(VAPID_KEYS_FILE, 'utf8'));
-      vapidPublicKey = keys.publicKey;
-      vapidPrivateKey = keys.privateKey;
-    } catch (err) {
-      console.error("Error reading VAPID keys file:", err);
-    }
+async function initVapidKeys() {
+  if (vapidPublicKey && vapidPrivateKey) {
+    webpush.setVapidDetails(
+      "mailto:paradas.empilhadeiras.sca@gmail.com",
+      vapidPublicKey,
+      vapidPrivateKey
+    );
+    return;
   }
 
-  if (!vapidPublicKey || !vapidPrivateKey) {
-    console.log("Generating dynamic VAPID keys for Web Push...");
+  try {
+    const docRef = firestoreDb.collection("system_settings").doc("vapid_keys");
+    const doc = await docRef.get();
+    if (doc.exists) {
+      const data = doc.data();
+      if (data && data.publicKey && data.privateKey) {
+        vapidPublicKey = data.publicKey;
+        vapidPrivateKey = data.privateKey;
+        console.log("Successfully loaded VAPID keys from Firestore!");
+        webpush.setVapidDetails(
+          "mailto:paradas.empilhadeiras.sca@gmail.com",
+          vapidPublicKey,
+          vapidPrivateKey
+        );
+        return;
+      }
+    }
+
+    console.log("No VAPID keys found in Firestore. Generating and persisting...");
     const keys = webpush.generateVAPIDKeys();
     vapidPublicKey = keys.publicKey;
     vapidPrivateKey = keys.privateKey;
-    try {
-      fs.writeFileSync(VAPID_KEYS_FILE, JSON.stringify(keys), 'utf8');
-    } catch (err) {
-      console.error("Failed to write dynamic VAPID keys file:", err);
+
+    await docRef.set({
+      publicKey: vapidPublicKey,
+      privateKey: vapidPrivateKey,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    webpush.setVapidDetails(
+      "mailto:paradas.empilhadeiras.sca@gmail.com",
+      vapidPublicKey,
+      vapidPrivateKey
+    );
+  } catch (err) {
+    console.error("Failed to load/persist VAPID keys from Firestore, falling back to local files:", err);
+    
+    // Safety fallback
+    const VAPID_KEYS_FILE = path.join(process.cwd(), ".vapid-keys.json");
+    if (fs.existsSync(VAPID_KEYS_FILE)) {
+      try {
+        const keys = JSON.parse(fs.readFileSync(VAPID_KEYS_FILE, 'utf8'));
+        vapidPublicKey = keys.publicKey;
+        vapidPrivateKey = keys.privateKey;
+      } catch (fileErr) {
+        console.error("Error reading fallback local VAPID keys:", fileErr);
+      }
     }
+
+    if (!vapidPublicKey || !vapidPrivateKey) {
+      const keys = webpush.generateVAPIDKeys();
+      vapidPublicKey = keys.publicKey;
+      vapidPrivateKey = keys.privateKey;
+      try {
+        fs.writeFileSync(VAPID_KEYS_FILE, JSON.stringify(keys), 'utf8');
+      } catch (writeErr) {
+        console.error("Failed to write local backup keys:", writeErr);
+      }
+    }
+
+    webpush.setVapidDetails(
+      "mailto:paradas.empilhadeiras.sca@gmail.com",
+      vapidPublicKey,
+      vapidPrivateKey
+    );
   }
 }
 
-webpush.setVapidDetails(
-  "mailto:paradas.empilhadeiras.sca@gmail.com",
-  vapidPublicKey!,
-  vapidPrivateKey!
-);
-
 async function startServer() {
+  await initVapidKeys();
   const app = express();
   const PORT = 3000;
 

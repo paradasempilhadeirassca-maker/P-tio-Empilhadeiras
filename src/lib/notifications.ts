@@ -133,13 +133,21 @@ export async function subscribeUserToPush(userId?: string | null) {
     const keyData = await keyResponse.json();
     const applicationServerKey = urlB64ToUint8Array(keyData.publicKey);
 
-    if (!subscription) {
-      // Create new subscription if none exists
-      subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey
-      });
+    // To prevent signature/key mismatch errors from legacy containers or previous VAPID iterations,
+    // we unsubscribe any existing subscription on this browser before making a fresh registration.
+    if (subscription) {
+      try {
+        await subscription.unsubscribe();
+      } catch (unsubErr) {
+        console.warn('Error rolling over old subscription keys:', unsubErr);
+      }
     }
+
+    // Create a fresh subscription with the latest persistent server public key
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey
+    });
 
     // Synchronize subscription details to backend database
     await fetch('/api/notifications/subscribe', {
