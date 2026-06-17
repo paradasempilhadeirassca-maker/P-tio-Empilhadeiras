@@ -18,7 +18,7 @@ import { PartsInventory } from './components/PartsInventory';
 import { ChecklistView } from './components/ChecklistView';
 import { FleetManagement } from './components/FleetManagement';
 import { MechanicAvailabilityView } from './components/MechanicAvailabilityView';
-import { requestNotificationPermission, sendLocalNotification } from './lib/notifications';
+import { requestNotificationPermission, sendLocalNotification, subscribeUserToPush } from './lib/notifications';
 import { 
   Truck, 
   ArrowLeft,
@@ -83,7 +83,13 @@ function AppContent() {
 
   useEffect(() => {
     if (user && profile) {
-      requestNotificationPermission().catch(console.error);
+      requestNotificationPermission()
+        .then((granted) => {
+          if (granted) {
+            subscribeUserToPush(user.uid).catch(console.error);
+          }
+        })
+        .catch(console.error);
     }
   }, [user, profile]);
 

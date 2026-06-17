@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
@@ -28,7 +29,10 @@
     "tailwind-merge": "^3.6.0",
     "twilio": "^6.0.2",
     "vite": "^8.0.13",
-    "vite-plugin-pwa": "^1.3.0"
+    "vite-plugin-pwa": "^1.3.0",
+    "web-push": "^3.6.7",
+    "workbox-precaching": "^7.4.1",
+    "workbox-routing": "^7.4.1"
   },
   "overrides": {
     "node-domexception": "file:./lib/mock-domexception"
@@ -39,7 +43,9 @@
     "@types/node": "^25.8.0",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
+    "@types/web-push": "^3.6.4",
     "autoprefixer": "^10.5.0",
+    "esbuild": "^0.28.1",
     "tailwindcss": "^4.3.0",
     "tsx": "^4.22.0",
     "typescript": "~6.0.3",

@@ -49,33 +49,113 @@ export async function sendLocalNotification(title: string, body: string) {
           const registration = await navigator.serviceWorker.ready;
           if (registration && 'showNotification' in registration) {
             await registration.showNotification(title, options);
-            return;
           }
         } catch (swError) {
           console.warn('Service Worker notification failed, falling back to window.Notification', swError);
-        }
-      }
-
-      // Fallback to window.Notification
-      // We wrap the instantiation in a check and a try-catch to handle "Illegal constructor"
-      // NOTE: In some iframe environments, Notification is present but not a constructor.
-      if (typeof NotificationClass === 'function') {
-        try {
-          // Double check if it's likely a constructor (simple heuristic)
-          if (NotificationClass.prototype) {
-            const instance = new (NotificationClass as any)(title, options);
-            instance.onclick = () => {
-              window.focus();
-              instance.close();
-            };
+          if (typeof NotificationClass === 'function' && NotificationClass.prototype) {
+            try {
+              new (NotificationClass as any)(title, options);
+            } catch (e) {}
           }
-        } catch (constructorError: any) {
-          // Swallow "Illegal constructor" or similar instantiation errors in restricted environments
+        }
+      } else {
+        if (typeof NotificationClass === 'function' && NotificationClass.prototype) {
+          try {
+            new (NotificationClass as any)(title, options);
+          } catch (e) {}
         }
       }
     }
   } catch (globalError) {
     console.warn('Global notification error', globalError);
+  }
+
+  // Trigger backend API to broadcast to all push subscriptions (notifying closed apps!)
+  try {
+    fetch('/api/notifications/notify-all', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ title, body })
+    }).catch(err => console.error('Error broadcasting notification to backend:', err));
+  } catch (err) {
+    console.error('Failed to trigger background notification broadcast:', err);
+  }
+}
+
+/**
+ * Helper to convert Web Push VAPID key
+ */
+function urlB64ToUint8Array(base64String: string) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding)
+    .replace(/\-/g, '+')
+    .replace(/_/g, '/');
+
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+/**
+ * Subscribes the current device to backend Push Notifications
+ */
+export async function subscribeUserToPush(userId?: string | null) {
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+    console.warn('Push messaging is not supported in this browser.');
+    return;
+  }
+
+  try {
+    // Request permission first
+    const permission = await window.Notification.requestPermission();
+    if (permission !== 'granted') {
+      console.warn('Notification permission not granted.');
+      return;
+    }
+
+    const registration = await navigator.serviceWorker.ready;
+    if (!registration.pushManager) {
+      console.warn('Push manager is not available in service worker registration.');
+      return;
+    }
+
+    // Try to get existing subscription
+    let subscription = await registration.pushManager.getSubscription();
+
+    // Fetch dynamic VAPID public key from backend
+    const keyResponse = await fetch('/api/notifications/vapid-public-key');
+    const keyData = await keyResponse.json();
+    const applicationServerKey = urlB64ToUint8Array(keyData.publicKey);
+
+    if (!subscription) {
+      // Create new subscription if none exists
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey
+      });
+    }
+
+    // Synchronize subscription details to backend database
+    await fetch('/api/notifications/subscribe', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        subscription,
+        userId: userId || null
+      })
+    });
+
+    console.log('Dispositivos inscrito com sucesso em notificações push em segundo plano!');
+  } catch (err) {
+    console.error('Failed to subscribe user to push notifications:', err);
   }
 }
 
