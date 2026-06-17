@@ -1,3 +1,6 @@
+import { db } from '../firebase';
+import { doc, setDoc } from 'firebase/firestore';
+
 /**
  * Request permission for local browser notifications
  */
@@ -149,7 +152,24 @@ export async function subscribeUserToPush(userId?: string | null) {
       applicationServerKey
     });
 
-    // Synchronize subscription details to backend database
+    // Save directly to Firestore from the client (failsafe & authenticated)
+    try {
+      const safeId = btoa(subscription.endpoint)
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+      const plainSub = JSON.parse(JSON.stringify(subscription));
+      await setDoc(doc(db, 'push_subscriptions', safeId), {
+        subscription: plainSub,
+        userId: userId || "",
+        updatedAt: new Date().toISOString()
+      });
+      console.log('Inscrição persistida com sucesso no Firestore diretamente do dispositivo logado.');
+    } catch (dbErr) {
+      console.error('Falha ao gravar inscrição diretamente no Firestore:', dbErr);
+    }
+
+    // Synchronize subscription details to backend database (so backend container knows it)
     await fetch('/api/notifications/subscribe', {
       method: 'POST',
       headers: {

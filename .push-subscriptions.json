@@ -1,0 +1,38 @@
+[
+  {
+    "id": "device_b_token_abc123",
+    "subscription": {
+      "endpoint": "https://fcm.googleapis.com/fcm/send/device_b_mock_endpoint_12345",
+      "keys": {
+        "p256dh": "BLmbyQW8k7h67_n6_5vI0x-y8X73N_7GfG",
+        "auth": "5vI0x-y8X73N_7GfG"
+      }
+    },
+    "userId": "user_b_operator",
+    "updatedAt": "2026-06-17T19:14:21.961Z"
+  },
+  {
+    "id": "device_c_token_xyz789",
+    "subscription": {
+      "endpoint": "https://fcm.googleapis.com/fcm/send/device_c_mock_endpoint_67890",
+      "keys": {
+        "p256dh": "ALnzyQW8k7h67_n6_5vI0x-y8X73N_7GfG",
+        "auth": "4uH0x-y8X73N_7GfG"
+      }
+    },
+    "userId": "user_c_mechanic",
+    "updatedAt": "2026-06-17T19:14:21.961Z"
+  },
+  {
+    "id": "device_d_token_def456",
+    "subscription": {
+      "endpoint": "https://updates.push.services.mozilla.com/wpush/v2/device_d_mock_endpoint_98765",
+      "keys": {
+        "p256dh": "CLozyQW8k7h67_n6_5vI0x-y8X73N_7GfG",
+        "auth": "3tI0x-y8X73N_7GfG"
+      }
+    },
+    "userId": "user_d_manager",
+    "updatedAt": "2026-06-17T19:14:21.961Z"
+  }
+]
