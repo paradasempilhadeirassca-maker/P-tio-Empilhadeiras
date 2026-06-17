@@ -23,7 +23,9 @@ import {
   Info,
   Save,
   Trash2,
-  Plus
+  Plus,
+  Bell,
+  BellRing
 } from 'lucide-react';
 import { 
   collection, 
@@ -71,6 +73,47 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
   const [absenceEndDate, setAbsenceEndDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [absenceNotes, setAbsenceNotes] = useState<string>('');
   const [isLoggingAbsence, setIsLoggingAbsence] = useState<boolean>(false);
+
+  // Push notifications states
+  const [notificationPermission, setNotificationPermission] = useState<string>('default');
+  const [showNotificationBanner, setShowNotificationBanner] = useState<boolean>(false);
+  const [isSubscribingPush, setIsSubscribingPush] = useState<boolean>(false);
+  const [pushStatusMsg, setPushStatusMsg] = useState<string>('');
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      setNotificationPermission(window.Notification.permission);
+      
+      const dismissed = localStorage.getItem('dismiss_push_banner_v2');
+      if (window.Notification.permission !== 'granted' && dismissed !== 'true') {
+        setShowNotificationBanner(true);
+      }
+    }
+  }, []);
+
+  const handleEnableNotifications = async () => {
+    setIsSubscribingPush(true);
+    setPushStatusMsg('');
+    try {
+      const { requestNotificationPermission, subscribeUserToPush } = await import('../lib/notifications');
+      const granted = await requestNotificationPermission();
+      if (granted) {
+        setNotificationPermission('granted');
+        await subscribeUserToPush(profile.uid);
+        setPushStatusMsg('Este aparelho foi inscrito com sucesso para receber notificações! ✅');
+        localStorage.setItem('dismiss_push_banner_v2', 'true');
+        setShowNotificationBanner(false);
+      } else {
+        setNotificationPermission('denied');
+        setPushStatusMsg('Permissão de notificação recusada ou bloqueada no navegador.');
+      }
+    } catch (err: any) {
+      console.error(err);
+      setPushStatusMsg('Erro ao configurar notificações: ' + err.message);
+    } finally {
+      setIsSubscribingPush(false);
+    }
+  };
 
   const { goals: operationGoals, mechanics, absences } = useData();
 
@@ -309,6 +352,41 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
 
         <WeeklyReminder />
 
+        {/* Dynamic Push Notification Opt-in Banner */}
+        {showNotificationBanner && (
+          <div className="mb-8 p-6 bg-blue-50 border border-blue-200 rounded-[2rem] shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-4 duration-300">
+            <div className="flex items-start gap-4">
+              <div className="p-3 bg-blue-600 rounded-2xl text-white shrink-0 shadow-md">
+                <BellRing className="w-6 h-6 animate-bounce" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900 tracking-tight">Ativar Notificações no Celular/Aparelho</h3>
+                <p className="text-slate-600 text-sm font-medium leading-relaxed mt-1">
+                  Receba alertas de <strong>Registros de Ocorrências</strong>, <strong>Check-Lists</strong> e do <strong>Início/Fim de Manutenção</strong> em tempo real, mesmo com o aplicativo fechado!
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 w-full md:w-auto self-end md:self-center">
+              <button
+                onClick={() => {
+                  localStorage.setItem('dismiss_push_banner_v2', 'true');
+                  setShowNotificationBanner(false);
+                }}
+                className="px-4 py-3 bg-white hover:bg-slate-100 rounded-xl text-slate-500 hover:text-slate-700 font-bold text-xs uppercase tracking-widest border border-slate-200 transition-all active:scale-95 flex-1 md:flex-none text-center"
+              >
+                Esconder
+              </button>
+              <button
+                onClick={handleEnableNotifications}
+                disabled={isSubscribingPush}
+                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs uppercase tracking-widest shadow-md transition-all active:scale-95 disabled:opacity-50 flex-1 md:flex-none text-center flex items-center justify-center gap-2"
+              >
+                {isSubscribingPush ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Ativar Agora'}
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {items.map((item) => (
             <button
@@ -395,7 +473,56 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
 
               <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
                 {activeTab === 'profile' ? (
-                  <div className="space-y-6">
+                  <div className="space-y-8">
+                    {/* Dedicated Notification Subscription settings area */}
+                    <div className="p-6 bg-slate-50 border border-slate-200 rounded-[1.75rem] space-y-4">
+                      <div className="flex items-start gap-3">
+                        <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl shadow-inner">
+                          <Bell className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h4 className="text-base font-black text-slate-900 tracking-tight">Notificações Push do Aparelho</h4>
+                          <p className="text-xs font-medium text-slate-500 leading-relaxed mt-0.5">
+                            Permita o recebimento de avisos de ocorrências, check-lists e status dos mecânicos para todos os aparelhos integrados.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 flex flex-col gap-2">
+                        <div className="flex items-center justify-between text-xs bg-white px-4 py-3 rounded-xl border border-slate-150">
+                          <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Status das Notificações:</span>
+                          <span className={cn(
+                            "font-black uppercase tracking-widest text-[9.5px] px-2.5 py-1 rounded-full",
+                            notificationPermission === 'granted' ? "bg-green-100 text-green-700" :
+                            notificationPermission === 'denied' ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"
+                          )}>
+                            {notificationPermission === 'granted' ? 'PERMITIDO (Ativo)' :
+                             notificationPermission === 'denied' ? 'BLOQUEADO' : 'PENDENTE'}
+                          </span>
+                        </div>
+
+                        {pushStatusMsg && (
+                          <div className={cn(
+                            "p-3 rounded-xl text-center font-bold text-xs",
+                            pushStatusMsg.includes('sucesso') ? "bg-green-50 text-green-700 border border-green-100" : "bg-amber-50 text-amber-700 border border-amber-100"
+                          )}>
+                            {pushStatusMsg}
+                          </div>
+                        )}
+
+                        <button
+                          type="button"
+                          disabled={isSubscribingPush}
+                          onClick={handleEnableNotifications}
+                          className="w-full mt-2 py-3 bg-blue-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-blue-700 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                        >
+                          {isSubscribingPush ? <Loader2 className="w-4 h-4 animate-spin" /> : (
+                            notificationPermission === 'granted' ? 'Atualizar/Inscrever Aparelho' : 'Ativar Notificações Neste Aparelho'
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
                     <div>
                       <h3 className="text-lg font-black text-slate-900 tracking-tight mb-1">Alterar Senha</h3>
                       <p className="text-sm font-medium text-slate-500">Mantenha seu acesso seguro e atualizado.</p>
