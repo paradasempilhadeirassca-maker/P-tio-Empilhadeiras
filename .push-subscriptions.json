@@ -9,7 +9,7 @@
       }
     },
     "userId": "user_b_operator",
-    "updatedAt": "2026-06-17T19:14:21.961Z"
+    "updatedAt": "2026-06-17T20:07:48.242Z"
   },
   {
     "id": "device_c_token_xyz789",
@@ -21,7 +21,7 @@
       }
     },
     "userId": "user_c_mechanic",
-    "updatedAt": "2026-06-17T19:14:21.961Z"
+    "updatedAt": "2026-06-17T20:07:48.242Z"
   },
   {
     "id": "device_d_token_def456",
@@ -33,6 +33,6 @@
       }
     },
     "userId": "user_d_manager",
-    "updatedAt": "2026-06-17T19:14:21.961Z"
+    "updatedAt": "2026-06-17T20:07:48.242Z"
   }
 ]

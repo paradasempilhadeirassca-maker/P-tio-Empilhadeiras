@@ -381,6 +381,54 @@ async function startServer() {
     }
   });
 
+  // Sync-Subscriptions API (updates local cache with all subscriptions from client-side Firestore)
+  app.post("/api/notifications/sync-subscriptions", async (req, res) => {
+    const { subscriptions } = req.body;
+    if (!Array.isArray(subscriptions)) {
+      return res.status(400).json({ success: false, error: "Subscriptions must be an array" });
+    }
+
+    try {
+      const currentSubs = readLocalSubscriptions();
+      let updatedCount = 0;
+      let addedCount = 0;
+
+      for (const incoming of subscriptions) {
+        if (!incoming.subscription || !incoming.subscription.endpoint) continue;
+        
+        const existingIdx = currentSubs.findIndex(sub => 
+          sub.id === incoming.id || 
+          sub.subscription.endpoint === incoming.subscription.endpoint
+        );
+
+        if (existingIdx !== -1) {
+          currentSubs[existingIdx] = {
+            id: incoming.id || currentSubs[existingIdx].id,
+            subscription: incoming.subscription,
+            userId: incoming.userId || currentSubs[existingIdx].userId || "",
+            updatedAt: incoming.updatedAt || new Date().toISOString()
+          };
+          updatedCount++;
+        } else {
+          currentSubs.push({
+            id: incoming.id || Buffer.from(incoming.subscription.endpoint).toString('base64url'),
+            subscription: incoming.subscription,
+            userId: incoming.userId || "",
+            updatedAt: incoming.updatedAt || new Date().toISOString()
+          });
+          addedCount++;
+        }
+      }
+
+      writeLocalSubscriptions(currentSubs);
+      console.log(`[Push Sync Endpoint] Sincronização concluída: ${addedCount} novos, ${updatedCount} atualizados. Total no cache: ${currentSubs.length}`);
+      res.json({ success: true, count: currentSubs.length });
+    } catch (error: any) {
+      console.error("Error syncing subscriptions:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
   // Send/Broadcast to all API (For notifying all devices even in background)
   app.post("/api/notifications/notify-all", async (req, res) => {
     const { title, body } = req.body;
@@ -404,17 +452,18 @@ async function startServer() {
 
     const sendPromises = subscriptions.map(async (sub) => {
       const displayEndpoint = sub.subscription.endpoint.slice(0, 50);
-      console.log(`Enviando para endpoint: ${displayEndpoint}...`);
+      const targetUser = sub.userId || "Anônimo/Desconhecido";
+      console.log(`Enviando para o dispositivo do usuário [${targetUser}] | ID: ${sub.id} | Endpoint: ${displayEndpoint}...`);
       try {
         await webpush.sendNotification(sub.subscription, payload);
         successCount++;
-        console.log(`Resultado individual: Sucesso`);
+        console.log(`Resultado individual para [${targetUser}]: Sucesso`);
       } catch (err: any) {
         failureCount++;
         const isExpired = err.statusCode === 410 || err.statusCode === 404;
         const errMsg = err.message || `Status ${err.statusCode}`;
         
-        console.error(`Resultado individual: Erro ${err.statusCode || 'Desconhecido'} - ${errMsg}`);
+        console.error(`Resultado individual para [${targetUser}]: Erro ${err.statusCode || 'Desconhecido'} - ${errMsg}`);
 
         if (isExpired) {
           console.log(`Detectado endpoint expirado ou inválido (404/410). Programando remoção: ${sub.id}`);

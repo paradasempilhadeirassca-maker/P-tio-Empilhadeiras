@@ -1,5 +1,52 @@
-import { db } from '../firebase';
-import { doc, setDoc } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType } from '../firebase';
+import { doc, setDoc, collection, getDocs } from 'firebase/firestore';
+
+/**
+ * Synchronizes active push subscriptions from Firestore to the backend's memory cache
+ */
+export async function syncPushSubscriptionsWithServer() {
+  if (typeof window === 'undefined') return;
+
+  try {
+    let querySnapshot;
+    try {
+      querySnapshot = await getDocs(collection(db, 'push_subscriptions'));
+    } catch (fsErr) {
+      handleFirestoreError(fsErr, OperationType.LIST, 'push_subscriptions');
+    }
+    const subscriptions: any[] = [];
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      if (data && data.subscription) {
+        subscriptions.push({
+          id: doc.id,
+          subscription: data.subscription,
+          userId: data.userId || "",
+          updatedAt: data.updatedAt || ""
+        });
+      }
+    });
+
+    console.log(`[Push Sync] Encontradas ${subscriptions.length} inscrições ativas no Firestore. Atualizando o cache do servidor...`);
+
+    const res = await fetch('/api/notifications/sync-subscriptions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ subscriptions })
+    });
+
+    if (res.ok) {
+      const resData = await res.json();
+      console.log(`[Push Sync] Sincronização com o servidor concluída com sucesso! Total no cache: ${resData.count}`);
+    } else {
+      console.warn(`[Push Sync] Falha na resposta de sincronização do servidor:`, res.status);
+    }
+  } catch (err) {
+    console.error('[Push Sync] Falha ao sincronizar inscrições do Firestore com o servidor:', err);
+  }
+}
 
 /**
  * Request permission for local browser notifications
@@ -159,11 +206,15 @@ export async function subscribeUserToPush(userId?: string | null) {
         .replace(/\//g, '_')
         .replace(/=+$/, '');
       const plainSub = JSON.parse(JSON.stringify(subscription));
-      await setDoc(doc(db, 'push_subscriptions', safeId), {
-        subscription: plainSub,
-        userId: userId || "",
-        updatedAt: new Date().toISOString()
-      });
+      try {
+        await setDoc(doc(db, 'push_subscriptions', safeId), {
+          subscription: plainSub,
+          userId: userId || "",
+          updatedAt: new Date().toISOString()
+        });
+      } catch (fsErr) {
+        handleFirestoreError(fsErr, OperationType.WRITE, `push_subscriptions/${safeId}`);
+      }
       console.log('Inscrição persistida com sucesso no Firestore diretamente do dispositivo logado.');
     } catch (dbErr) {
       console.error('Falha ao gravar inscrição diretamente no Firestore:', dbErr);
@@ -182,6 +233,9 @@ export async function subscribeUserToPush(userId?: string | null) {
     });
 
     console.log('Dispositivos inscrito com sucesso em notificações push em segundo plano!');
+
+    // Trigger full background synchronization to update the backend cache table
+    await syncPushSubscriptionsWithServer();
   } catch (err) {
     console.error('Failed to subscribe user to push notifications:', err);
   }

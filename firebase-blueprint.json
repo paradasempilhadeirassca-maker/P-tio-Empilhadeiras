@@ -187,6 +187,10 @@
     "/operation_goals/{goalId}": {
       "schema": "object",
       "description": "Production goals."
+    },
+    "/push_subscriptions/{id}": {
+      "schema": "object",
+      "description": "Push notification subscriptions for background notifications."
     }
   }
 }

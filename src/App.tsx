@@ -18,7 +18,7 @@ import { PartsInventory } from './components/PartsInventory';
 import { ChecklistView } from './components/ChecklistView';
 import { FleetManagement } from './components/FleetManagement';
 import { MechanicAvailabilityView } from './components/MechanicAvailabilityView';
-import { requestNotificationPermission, sendLocalNotification, subscribeUserToPush } from './lib/notifications';
+import { requestNotificationPermission, sendLocalNotification, subscribeUserToPush, syncPushSubscriptionsWithServer } from './lib/notifications';
 import { 
   Truck, 
   ArrowLeft,
@@ -87,9 +87,15 @@ function AppContent() {
         .then((granted) => {
           if (granted) {
             subscribeUserToPush(user.uid).catch(console.error);
+          } else {
+            // Even if permission is denied/not support on this device, sync other devices' subscriptions
+            syncPushSubscriptionsWithServer().catch(console.error);
           }
         })
-        .catch(console.error);
+        .catch((err) => {
+          console.error(err);
+          syncPushSubscriptionsWithServer().catch(console.error);
+        });
     }
   }, [user, profile]);
 
