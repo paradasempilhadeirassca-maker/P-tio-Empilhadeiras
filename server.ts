@@ -3,288 +3,16 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import twilio from "twilio";
 import dotenv from "dotenv";
-import admin from "firebase-admin";
-import webpush from "web-push";
 import fs from "fs";
+import { PushNotificationService } from "./PushNotificationService";
 
 dotenv.config();
 
-// Load firebaseConfig safely across node engines
-const firebaseConfig = JSON.parse(
-  fs.readFileSync(path.join(process.cwd(), "firebase-applet-config.json"), "utf8")
-);
-
-// Initialize Firebase Admin SDK
-if (admin.apps.length === 0) {
-  admin.initializeApp({
-    projectId: firebaseConfig.projectId
-  });
-}
-
-// REST-based Firestore client to bypass IAM permission limitations in Sandbox environments
-const FIRESTORE_BASE_URL = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${firebaseConfig.firestoreDatabaseId}/documents`;
-const FIRESTORE_API_KEY = firebaseConfig.apiKey;
-
-function toFirestoreFields(obj: any): any {
-  const fields: any = {};
-  for (const [key, val] of Object.entries(obj)) {
-    if (val === null || val === undefined) {
-      continue;
-    }
-    if (typeof val === 'string') {
-      fields[key] = { stringValue: val };
-    } else if (typeof val === 'number') {
-      fields[key] = { doubleValue: val };
-    } else if (typeof val === 'boolean') {
-      fields[key] = { booleanValue: val };
-    } else if (typeof val === 'object') {
-      if (val instanceof Date) {
-        fields[key] = { timestampValue: val.toISOString() };
-      } else if (Array.isArray(val)) {
-        fields[key] = toFirestoreArrayValue(val);
-      } else {
-        fields[key] = { mapValue: { fields: toFirestoreFields(val) } };
-      }
-    }
-  }
-  return fields;
-}
-
-function toFirestoreArrayValue(arr: any[]): any {
-  return {
-    arrayValue: {
-      values: arr.map(item => {
-        if (typeof item === 'string') return { stringValue: item };
-        if (typeof item === 'number') return { doubleValue: item };
-        if (typeof item === 'boolean') return { booleanValue: item };
-        if (typeof item === 'object') return { mapValue: { fields: toFirestoreFields(item) } };
-        return { stringValue: String(item) };
-      })
-    }
-  };
-}
-
-function fromFirestoreFields(fields: any): any {
-  if (!fields) return {};
-  const res: any = {};
-  for (const [key, val] of Object.entries(fields)) {
-    const v = val as any;
-    if ('stringValue' in v) {
-      res[key] = v.stringValue;
-    } else if ('doubleValue' in v) {
-      res[key] = Number(v.doubleValue);
-    } else if ('integerValue' in v) {
-      res[key] = Number(v.integerValue);
-    } else if ('booleanValue' in v) {
-      res[key] = v.booleanValue;
-    } else if ('timestampValue' in v) {
-      res[key] = v.timestampValue;
-    } else if ('mapValue' in v && v.mapValue && v.mapValue.fields) {
-      res[key] = fromFirestoreFields(v.mapValue.fields);
-    } else if ('arrayValue' in v && v.arrayValue && v.arrayValue.values) {
-      res[key] = v.arrayValue.values.map((item: any) => {
-        if ('stringValue' in item) return item.stringValue;
-        if ('doubleValue' in item) return Number(item.doubleValue);
-        if ('integerValue' in item) return Number(item.integerValue);
-        if ('booleanValue' in item) return item.booleanValue;
-        if ('mapValue' in item && item.mapValue && item.mapValue.fields) {
-          return fromFirestoreFields(item.mapValue.fields);
-        }
-        return item;
-      });
-    }
-  }
-  return res;
-}
-
-async function getDocRest(collectionName: string, docId: string) {
-  const url = `${FIRESTORE_BASE_URL}/${collectionName}/${docId}?key=${FIRESTORE_API_KEY}`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    if (response.status === 404) {
-      return null;
-    }
-    const errBody = await response.text();
-    throw new Error(`Firestore REST GET failed with status ${response.status}: ${errBody}`);
-  }
-  const data = await response.json();
-  return {
-    id: docId,
-    exists: true,
-    data: () => fromFirestoreFields(data.fields)
-  };
-}
-
-async function setDocRest(collectionName: string, docId: string, data: any) {
-  const url = `${FIRESTORE_BASE_URL}/${collectionName}/${docId}?key=${FIRESTORE_API_KEY}`;
-  const payload = {
-    fields: toFirestoreFields(data)
-  };
-  const response = await fetch(url, {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  });
-  if (!response.ok) {
-    const errBody = await response.text();
-    throw new Error(`Firestore REST PATCH failed with status ${response.status}: ${errBody}`);
-  }
-  return true;
-}
-
-async function getDocsRest(collectionName: string) {
-  const url = `${FIRESTORE_BASE_URL}/${collectionName}?key=${FIRESTORE_API_KEY}`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    const errBody = await response.text();
-    throw new Error(`Firestore REST GET collection failed with status ${response.status}: ${errBody}`);
-  }
-  const result = await response.json();
-  const documents = result.documents || [];
-  return {
-    size: documents.length,
-    docs: documents.map((doc: any) => {
-      const nameParts = doc.name.split('/');
-      const id = nameParts[nameParts.length - 1];
-      return {
-        id,
-        ref: {
-          delete: async () => {
-            const deleteUrl = `${FIRESTORE_BASE_URL}/${collectionName}/${id}?key=${FIRESTORE_API_KEY}`;
-            const delRes = await fetch(deleteUrl, { method: 'DELETE' });
-            if (!delRes.ok) {
-              const delErr = await delRes.text();
-              throw new Error(`Firestore REST DELETE failed: ${delErr}`);
-            }
-          }
-        },
-        data: () => fromFirestoreFields(doc.fields)
-      };
-    })
-  };
-}
-
-// Local push subscriptions fallback persistence within container filesystem to fully bypass 403 blocks
-const SUBSCRIPTIONS_FILE = path.join(process.cwd(), ".push-subscriptions.json");
-
-interface LocalSubscription {
-  id: string;
-  subscription: {
-    endpoint: string;
-    keys: {
-      p256dh: string;
-      auth: string;
-    };
-  };
-  userId: string;
-  updatedAt: string;
-}
-
-function readLocalSubscriptions(): LocalSubscription[] {
-  try {
-    if (fs.existsSync(SUBSCRIPTIONS_FILE)) {
-      const raw = fs.readFileSync(SUBSCRIPTIONS_FILE, 'utf8');
-      return JSON.parse(raw) || [];
-    }
-  } catch (err) {
-    console.error("Error reading local subscriptions file:", err);
-  }
-  return [];
-}
-
-function writeLocalSubscriptions(subs: LocalSubscription[]) {
-  try {
-    fs.writeFileSync(SUBSCRIPTIONS_FILE, JSON.stringify(subs, null, 2), 'utf8');
-  } catch (err) {
-    console.error("Error writing local subscriptions file:", err);
-  }
-}
-
-// Setup Web Push with Firestore persistent VAPID keypair
-let vapidPublicKey = process.env.VAPID_PUBLIC_KEY || "";
-let vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || "";
-
-async function initVapidKeys() {
-  if (vapidPublicKey && vapidPrivateKey) {
-    webpush.setVapidDetails(
-      "mailto:paradas.empilhadeiras.sca@gmail.com",
-      vapidPublicKey,
-      vapidPrivateKey
-    );
-    return;
-  }
-
-  try {
-    const doc = await getDocRest("system_settings", "vapid_keys");
-    if (doc && doc.exists) {
-      const data = doc.data();
-      if (data && data.publicKey && data.privateKey) {
-        vapidPublicKey = data.publicKey;
-        vapidPrivateKey = data.privateKey;
-        console.log("Successfully loaded VAPID keys from Firestore!");
-        webpush.setVapidDetails(
-          "mailto:paradas.empilhadeiras.sca@gmail.com",
-          vapidPublicKey,
-          vapidPrivateKey
-        );
-        return;
-      }
-    }
-
-    console.log("No VAPID keys found in Firestore. Generating and persisting...");
-    const keys = webpush.generateVAPIDKeys();
-    vapidPublicKey = keys.publicKey;
-    vapidPrivateKey = keys.privateKey;
-
-    await setDocRest("system_settings", "vapid_keys", {
-      publicKey: vapidPublicKey,
-      privateKey: vapidPrivateKey,
-      createdAt: new Date().toISOString()
-    });
-
-    webpush.setVapidDetails(
-      "mailto:paradas.empilhadeiras.sca@gmail.com",
-      vapidPublicKey,
-      vapidPrivateKey
-    );
-  } catch (err) {
-    console.error("Failed to load/persist VAPID keys from Firestore, falling back to local files:", err);
-    
-    // Safety fallback
-    const VAPID_KEYS_FILE = path.join(process.cwd(), ".vapid-keys.json");
-    if (fs.existsSync(VAPID_KEYS_FILE)) {
-      try {
-        const keys = JSON.parse(fs.readFileSync(VAPID_KEYS_FILE, 'utf8'));
-        vapidPublicKey = keys.publicKey;
-        vapidPrivateKey = keys.privateKey;
-      } catch (fileErr) {
-        console.error("Error reading fallback local VAPID keys:", fileErr);
-      }
-    }
-
-    if (!vapidPublicKey || !vapidPrivateKey) {
-      const keys = webpush.generateVAPIDKeys();
-      vapidPublicKey = keys.publicKey;
-      vapidPrivateKey = keys.privateKey;
-      try {
-        fs.writeFileSync(VAPID_KEYS_FILE, JSON.stringify(keys), 'utf8');
-      } catch (writeErr) {
-        console.error("Failed to write local backup keys:", writeErr);
-      }
-    }
-
-    webpush.setVapidDetails(
-      "mailto:paradas.empilhadeiras.sca@gmail.com",
-      vapidPublicKey,
-      vapidPrivateKey
-    );
-  }
-}
-
 async function startServer() {
-  await initVapidKeys();
+  // Initialize dynamic VAPID keys on startup
+  const vapidPublicKey = await PushNotificationService.initVapidKeys();
+  console.log("[Server] VAPID keys loaded successfully.");
+
   const app = express();
   const PORT = 3000;
 
@@ -335,316 +63,55 @@ async function startServer() {
     res.json({ publicKey: vapidPublicKey });
   });
 
-  // Subscribe API
+  // Subscribe API - Direct registration into Firestore using Firebase Admin
   app.post("/api/notifications/subscribe", async (req, res) => {
-    const { subscription, userId } = req.body;
+    const { subscription, userId, deviceId, metadata } = req.body;
     if (!subscription || !subscription.endpoint) {
       return res.status(400).json({ success: false, error: "Invalid subscription payload" });
     }
+    if (!deviceId) {
+      return res.status(400).json({ success: false, error: "Missing persistent deviceId" });
+    }
 
     try {
-      const safeDocId = Buffer.from(subscription.endpoint).toString('base64url');
-      const docData = {
-        subscription,
+      await PushNotificationService.registerDevice({
+        deviceId,
         userId: userId || "",
-        updatedAt: new Date().toISOString()
-      };
+        subscription,
+        metadata
+      });
 
-      // 1. Core Persistence - Save database on local file system (bulletproof container storage)
-      const currentSubs = readLocalSubscriptions();
-      const existingIdx = currentSubs.findIndex(sub => sub.id === safeDocId || sub.subscription.endpoint === subscription.endpoint);
-      if (existingIdx !== -1) {
-        currentSubs[existingIdx] = { id: safeDocId, ...docData };
-      } else {
-        currentSubs.push({ id: safeDocId, ...docData });
-      }
-      writeLocalSubscriptions(currentSubs);
-
-      // Detailed logging as requested
-      console.log(`[Subscription Registry] Success! Each device coexisting smoothly. Total local subscriptions: ${currentSubs.length}`);
-      console.log(`[Subscription Log] User: ${userId || "Anonymous"} | Doc ID: ${safeDocId} | Endpoint: ${subscription.endpoint?.slice(0, 60)}... | Date: ${docData.updatedAt}`);
-
-      // 2. Fallback persistence to remote Firestore named database via REST API.
-      // Since security rules of the named database might be locked out publicly on server side, we execute in a safe try-catch.
-      // Double reassurance: Client-side authenticated SDK saving runs as well in background with 100% success rate!
-      try {
-        await setDocRest("push_subscriptions", safeDocId, docData);
-        console.log(`[Subscription Firestore REST] Synced successfully to Remote Firestore.`);
-      } catch (fsErr: any) {
-        console.warn(`[Subscription Firestore REST] Bypassed remote sync (normal behavior in sandbox container due to IAM/Rules restrictions). Reason: ${fsErr.message}`);
-      }
-
-      res.json({ success: true, count: currentSubs.length });
+      res.json({ success: true });
     } catch (error: any) {
-      console.error("Error saving subscription:", error);
+      console.error("Error registering subscription in PushNotificationService:", error);
       res.status(500).json({ success: false, error: error.message });
     }
   });
 
-  // Sync-Subscriptions API (updates local cache with all subscriptions from client-side Firestore)
-  app.post("/api/notifications/sync-subscriptions", async (req, res) => {
-    const { subscriptions } = req.body;
-    if (!Array.isArray(subscriptions)) {
-      return res.status(400).json({ success: false, error: "Subscriptions must be an array" });
-    }
-
-    try {
-      const currentSubs = readLocalSubscriptions();
-      let updatedCount = 0;
-      let addedCount = 0;
-
-      for (const incoming of subscriptions) {
-        if (!incoming.subscription || !incoming.subscription.endpoint) continue;
-        
-        const existingIdx = currentSubs.findIndex(sub => 
-          sub.id === incoming.id || 
-          sub.subscription.endpoint === incoming.subscription.endpoint
-        );
-
-        if (existingIdx !== -1) {
-          currentSubs[existingIdx] = {
-            id: incoming.id || currentSubs[existingIdx].id,
-            subscription: incoming.subscription,
-            userId: incoming.userId || currentSubs[existingIdx].userId || "",
-            updatedAt: incoming.updatedAt || new Date().toISOString()
-          };
-          updatedCount++;
-        } else {
-          currentSubs.push({
-            id: incoming.id || Buffer.from(incoming.subscription.endpoint).toString('base64url'),
-            subscription: incoming.subscription,
-            userId: incoming.userId || "",
-            updatedAt: incoming.updatedAt || new Date().toISOString()
-          });
-          addedCount++;
-        }
-      }
-
-      writeLocalSubscriptions(currentSubs);
-      console.log(`[Push Sync Endpoint] Sincronização concluída: ${addedCount} novos, ${updatedCount} atualizados. Total no cache: ${currentSubs.length}`);
-      res.json({ success: true, count: currentSubs.length });
-    } catch (error: any) {
-      console.error("Error syncing subscriptions:", error);
-      res.status(500).json({ success: false, error: error.message });
-    }
+  // Sync-Subscriptions API - Stub for backwards-compatibility
+  app.post("/api/notifications/sync-subscriptions", (req, res) => {
+    res.json({ success: true, count: 0 });
   });
 
-  // Send/Broadcast to all API (For notifying all devices even in background)
+  // Send/Broadcast to all API
   app.post("/api/notifications/notify-all", async (req, res) => {
-    const startTime = Date.now();
-    const requestTime = new Date().toISOString();
-    const requestIp = req.ip || req.headers["x-forwarded-for"] || req.socket.remoteAddress || "Desconhecido";
-    const requestHeaders = req.headers;
-    const requestBody = req.body;
-    
-    const { title, body, excludeEndpoint, userOriginated } = requestBody;
-
-    console.log(`\n=============================================================`);
-    console.log(`[LOG DETALHADO - ETAPA 2] REQUISIÇÃO RECEBIDA NO SERVIDOR`);
-    console.log(`- Horário: ${requestTime}`);
-    console.log(`- IP de Origem: ${requestIp}`);
-    console.log(`- Headers Recebidos:`, JSON.stringify(requestHeaders, null, 2));
-    console.log(`- Body Completo Recebido:`, JSON.stringify(requestBody, null, 2));
-    console.log(`=============================================================\n`);
+    const { title, body, originDeviceId, originUserEmail } = req.body;
 
     if (!title) {
       return res.status(400).json({ success: false, error: "Title is required" });
     }
 
-    const maskEndpoint = (ep: string | null) => {
-      if (!ep) return "Nenhum";
-      if (ep.length <= 30) return ep;
-      return `${ep.slice(0, 25)}...${ep.slice(-15)}`;
-    };
-
-    let firestoreCount = 0;
-    let subscriptions: any[] = [];
-    let fsErrorMsg: string | null = null;
-
-    // 1. Core database retrieval: Load subscriptions directly from remote persistent Firestore
     try {
-      console.log("[LOG DETALHADO - ETAPA 3] Buscando inscrições ativas no Firestore remoto...");
-      const fsDocsResult = await getDocsRest("push_subscriptions");
-      
-      if (fsDocsResult && fsDocsResult.docs) {
-        fsDocsResult.docs.forEach((doc: any) => {
-          const docData = doc.data();
-          if (docData && docData.subscription && docData.subscription.endpoint) {
-            subscriptions.push({
-              id: doc.id,
-              subscription: docData.subscription,
-              userId: docData.userId || "",
-              updatedAt: docData.updatedAt || ""
-            });
-          }
-        });
-        firestoreCount = subscriptions.length;
-        console.log(`[LOG DETALHADO - ETAPA 3] Total de subscriptions encontradas no Firestore remoto: ${firestoreCount}`);
-      } else {
-        console.warn("[LOG DETALHADO - ETAPA 3] Retorno do Firestore remoto não possui 'docs' ou está vazio.");
-      }
-    } catch (fsErr: any) {
-      fsErrorMsg = fsErr.message || String(fsErr);
-      console.error("[LOG DETALHADO - ETAPA 3] ERRO crítico ao buscar do Firestore remoto via REST:", fsErrorMsg);
-    }
-
-    if (subscriptions.length === 0) {
-      console.log(`\n[LOG DETALHADO - ETAPA 3] AVISO: Nenhuma subscrição válida foi retornada pelo Firestore.`);
-      console.log(`- Motivo provável: ${fsErrorMsg ? `Erro de conexão/permissão Firestore: ${fsErrorMsg}` : "A coleção 'push_subscriptions' está vazia no banco de dados."}`);
-    } else {
-      console.log(`\n--- [LOG DETALHADO - ETAPA 3] LISTA DE SUBSCRIÇÕES ENCONTRADAS NO FIRESTORE ---`);
-      subscriptions.forEach((sub, i) => {
-        console.log(`Firestore Sub #${i + 1}:`);
-        console.log(`  - Doc ID: ${sub.id}`);
-        console.log(`  - User ID: ${sub.userId || "N/A"}`);
-        console.log(`  - Endpoint Mascarado: ${maskEndpoint(sub.subscription.endpoint)}`);
+      const result = await PushNotificationService.broadcastNotification({
+        title,
+        body: body || "",
+        originDeviceId: originDeviceId || null,
+        originUserEmail: originUserEmail || null
       });
-      console.log(`---------------------------------------------------------------------------------\n`);
-    }
 
-    // 2. Fallback: Load and merge from local file cache database (.push-subscriptions.json)
-    let localCount = 0;
-    try {
-      const localSubs = readLocalSubscriptions();
-      localCount = localSubs.length;
-      console.log(`[LOG DETALHADO - ETAPA 3] Inscrições encontradas no arquivo de cache local de contingência: ${localCount}`);
-      
-      localSubs.forEach(localSub => {
-        if (!localSub.subscription || !localSub.subscription.endpoint) return;
-        const exists = subscriptions.some(s => s.subscription.endpoint === localSub.subscription.endpoint);
-        if (!exists) {
-          subscriptions.push(localSub);
-        }
-      });
-    } catch (localErr: any) {
-      console.error("[LOG DETALHADO - ETAPA 3] Erro ao carregar inscrições locais:", localErr.message || localErr);
-    }
-
-    const unifiedCount = subscriptions.length;
-    console.log(`[LOG DETALHADO - ETAPA 3] Total de subscrições unificadas (Firestore + Cache Local): ${unifiedCount}`);
-
-    // 3. Filter out the excludeEndpoint if specified
-    if (excludeEndpoint) {
-      subscriptions = subscriptions.filter(sub => sub.subscription.endpoint !== excludeEndpoint);
-      console.log(`[LOG DETALHADO - ETAPA 3] Filtrando dispositivo do usuário autor (excludeEndpoint). Subscrições restantes: ${subscriptions.length}`);
-    }
-
-    // 4. Validate subscriptions (keys.auth, keys.p256dh, endpoint) before trying to send
-    console.log(`\n=============================================================`);
-    console.log(`[LOG DETALHADO - ETAPA 4] VALIDANDO CADA SUBSCRIÇÃO ANTES DO ENVIO`);
-    const validatedSubs: any[] = [];
-    
-    subscriptions.forEach((sub, idx) => {
-      console.log(`Validando Dispositivo #${idx + 1} (ID: ${sub.id}):`);
-      const sObj = sub.subscription;
-      
-      if (!sObj) {
-        console.error(`  - ❌ INVÁLIDA: Objeto de subscrição é nulo ou indefinido.`);
-        return;
-      }
-      
-      const endpointVal = sObj.endpoint;
-      const keysVal = sObj.keys;
-      const authVal = keysVal?.auth;
-      const p256dhVal = keysVal?.p256dh;
-      
-      console.log(`  - Endpoint: "${maskEndpoint(endpointVal)}"`);
-      console.log(`  - Chave Auth presente: ${authVal ? "✅ SIM" : "❌ NÃO"}`);
-      console.log(`  - Chave p256dh presente: ${p256dhVal ? "✅ SIM" : "❌ NÃO"}`);
-      
-      if (!endpointVal) {
-        console.error(`  - ❌ REJEITADA: Faltando propriedade 'endpoint'.`);
-      } else if (!keysVal || !authVal || !p256dhVal) {
-        console.error(`  - ❌ REJEITADA: Faltando chaves criptográficas (auth/p256dh). O navegador não conseguirá decodificar a mensagem.`);
-      } else {
-        console.log(`  - ✅ VALIDADA COM SUCESSO: Estrutura em conformidade.`);
-        validatedSubs.push(sub);
-      }
-    });
-    console.log(`Total de subscrições válidas prontas para envio: ${validatedSubs.length}/${subscriptions.length}`);
-    console.log(`=============================================================\n`);
-
-    let successCount = 0;
-    let failureCount = 0;
-    const unsubscribedDocIds: string[] = [];
-
-    const payload = JSON.stringify({ title, body: body || "" });
-
-    // 5. Envio & Resultado individual de cada envio
-    console.log(`\n=============================================================`);
-    console.log(`[LOG DETALHADO - ETAPA 5] INICIANDO ENVIO PELO WEB-PUSH`);
-    
-    const sendPromises = validatedSubs.map(async (sub, idx) => {
-      const maskedEp = maskEndpoint(sub.subscription.endpoint);
-      const targetUser = sub.userId || "Anônimo/Desconhecido";
-      console.log(`\nDisparando para Dispositivo #${idx + 1} [Usuário: ${targetUser}] | ID: ${sub.id}:`);
-      console.log(`  - Endpoint: ${sub.subscription.endpoint}`);
-      
-      try {
-        const response = await webpush.sendNotification(sub.subscription, payload);
-        successCount++;
-        const statusCode = (response as any)?.statusCode || 201;
-        console.log(`  - 🚀 SUCESSO DO ENVIO para #${idx + 1}:`);
-        console.log(`    - Código HTTP retornado: ${statusCode}`);
-        console.log(`    - Resposta completa:`, JSON.stringify(response || {}));
-      } catch (err: any) {
-        failureCount++;
-        const statusCode = err.statusCode || "Desconhecido";
-        const isExpired = err.statusCode === 410 || err.statusCode === 404;
-        const errMsg = err.message || `Erro desconhecido durante o envio`;
-        
-        console.error(`  - ❌ FALHA DO ENVIO para #${idx + 1}:`);
-        console.error(`    - Código HTTP retornado: ${statusCode}`);
-        console.error(`    - Mensagem de Erro completa:`, err);
-        console.error(`    - Corpo da Exceção:`, JSON.stringify(err || {}));
-
-        if (isExpired) {
-          console.log(`    - [FALHA 404/410] Subscrição expirou ou foi cancelada no dispositivo do usuário. Programando remoção: ${sub.id}`);
-          unsubscribedDocIds.push(sub.id);
-          
-          try {
-            const deleteUrl = `${FIRESTORE_BASE_URL}/push_subscriptions/${sub.id}?key=${FIRESTORE_API_KEY}`;
-            fetch(deleteUrl, { method: 'DELETE' }).catch(() => {});
-          } catch (delErr) {}
-        }
-      }
-    });
-
-    try {
-      await Promise.all(sendPromises);
-
-      // Perform automatic cleanups on expired/invalid subscriptions from local file cache database
-      if (unsubscribedDocIds.length > 0) {
-        for (const expId of unsubscribedDocIds) {
-          try {
-            const deleteUrl = `${FIRESTORE_BASE_URL}/push_subscriptions/${expId}?key=${FIRESTORE_API_KEY}`;
-            await fetch(deleteUrl, { method: 'DELETE' });
-            console.log(`[LOG DETALHADO - ETAPA 5] Removido do Firestore remoto com sucesso: ${expId}`);
-          } catch (e) {}
-        }
-
-        const remainingSubs = readLocalSubscriptions().filter(s => !unsubscribedDocIds.includes(s.id));
-        writeLocalSubscriptions(remainingSubs);
-        console.log(`[LOG DETALHADO - ETAPA 5] Limpeza de cache local concluída para ${unsubscribedDocIds.length} inscrições inválidas.`);
-      }
-
-      const totalDuration = Date.now() - startTime;
-      console.log(`\n=============================================================`);
-      console.log(`[LOG DETALHADO - ETAPA 5] CONCLUSÃO DO PROCESSAMENTO`);
-      console.log(`- Tempo Total Decorrido: ${totalDuration}ms`);
-      console.log(`- Quantidade de Sucessos: ${successCount}`);
-      console.log(`- Quantidade de Falhas: ${failureCount}`);
-      console.log(`=============================================================\n`);
-
-      res.json({
-        success: true,
-        subscriptionsCount: validatedSubs.length,
-        sucessos: successCount,
-        falhas: failureCount,
-        durationMs: totalDuration
-      });
+      res.json(result);
     } catch (error: any) {
-      console.error("[LOG DETALHADO - ETAPA 5] Erro crítico síncrono no loop de envio:", error);
+      console.error("[Server] Error during push broadcast notification:", error);
       res.status(500).json({ success: false, error: error.message });
     }
   });

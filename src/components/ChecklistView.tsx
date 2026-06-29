@@ -223,7 +223,7 @@ export function ChecklistView() {
       const notificationTitle = `📋 CHECK-LIST OPERACIONAL`;
       const notificationBody = `Máquina: ${machineName}\nStatus: ${hasMajorIssues ? 'COM IRREGULARIDADES' : 'OK'}`;
       
-      sendLocalNotification(notificationTitle, notificationBody);
+      sendLocalNotification(notificationTitle, notificationBody, true);
 
       sendWhatsAppNotification(
         `📋 *CHECK-LIST OPERACIONAL*\n\n` +

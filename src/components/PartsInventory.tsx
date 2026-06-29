@@ -256,7 +256,7 @@ export function PartsInventory() {
         const notificationTitle = `⚠️ ESTOQUE BAIXO`;
         const notificationBody = `Peça: ${formData.name}\nQtd: ${formData.quantity} ${formData.unit}`;
         
-        sendLocalNotification(notificationTitle, notificationBody);
+        sendLocalNotification(notificationTitle, notificationBody, true);
 
         sendWhatsAppNotification(
           `⚠️ *ALERTA DE ESTOQUE BAIXO*\n\n` +

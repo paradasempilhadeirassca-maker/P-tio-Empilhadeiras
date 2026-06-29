@@ -890,7 +890,7 @@ export function ManagerDashboard() {
       }).join('\n') +
       `\n\nFavor realizar a inspeção o quanto antes.`;
 
-    sendLocalNotification(`⚠️ LEMBRETE DE CHECK-LIST`, `Existem ${machinesMissingChecklist.length} máquinas sem check-list hoje.`);
+    sendLocalNotification(`⚠️ LEMBRETE DE CHECK-LIST`, `Existem ${machinesMissingChecklist.length} máquinas sem check-list hoje.`, true);
     await sendWhatsAppNotification(message);
     alert("Lembretes enviados!");
   };

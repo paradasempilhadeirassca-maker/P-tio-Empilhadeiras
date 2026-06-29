@@ -1,17 +1,27 @@
-import { db, handleFirestoreError, OperationType, auth } from '../firebase';
-import { doc, setDoc, collection, getDocs } from 'firebase/firestore';
+import { auth } from '../firebase';
 
 /**
- * Synchronizes active push subscriptions from Firestore to the backend's memory cache
+ * Generates or retrieves a persistent, unique ID for the current browser/device.
+ */
+export function getOrCreateDeviceId(): string {
+  if (typeof window === 'undefined') return '';
+  let id = localStorage.getItem('patio_device_id');
+  if (!id) {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+      id = crypto.randomUUID();
+    } else {
+      id = 'dev_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    }
+    localStorage.setItem('patio_device_id', id);
+  }
+  return id;
+}
+
+/**
+ * Synchronizes active push subscriptions - Stub for backwards-compatibility
  */
 export async function syncPushSubscriptionsWithServer() {
-  if (typeof window === 'undefined') return;
-
-  try {
-    console.log('[Push Sync] Servidor agora carrega e sincroniza inscrições de forma autônoma diretamente do Firestore.');
-  } catch (err) {
-    console.error('[Push Sync] Falha ao ignorar sincronização redundante:', err);
-  }
+  console.log('[Push Sync] Servidor agora gerencia e limpa inscrições automaticamente diretamente no banco de dados.');
 }
 
 /**
@@ -19,7 +29,7 @@ export async function syncPushSubscriptionsWithServer() {
  */
 export async function requestNotificationPermission() {
   if (typeof window === 'undefined' || !('Notification' in window)) {
-    console.warn('This browser does not support desktop notification');
+    console.warn('This browser does not support desktop notifications');
     return false;
   }
 
@@ -30,7 +40,6 @@ export async function requestNotificationPermission() {
     }
 
     if (NotificationClass.permission !== 'denied') {
-      // Some browsers might still use callback-based requestPermission
       const permission = await NotificationClass.requestPermission();
       return permission === 'granted';
     }
@@ -42,114 +51,72 @@ export async function requestNotificationPermission() {
 }
 
 /**
- * Send a local browser notification
+ * Send a local browser notification for immediate visual feedback (if focused).
+ * If triggerPush is true, also invokes the server-side notify-all endpoint to deliver in real-time.
  */
-export async function sendLocalNotification(title: string, body: string) {
-  if (typeof window === 'undefined' || !('Notification' in window)) return;
+export async function sendLocalNotification(title: string, body: string, triggerPush: boolean = false) {
+  if (typeof window === 'undefined') return;
 
-  try {
-    const NotificationClass = window.Notification;
-    if (NotificationClass.permission === 'granted') {
-      const options = {
-        body,
-        icon: 'https://i.postimg.cc/SKcgQrKX/openart-image-CVX2wu-Ks-1775830140914-raw-Photoroom.png',
-        badge: 'https://i.postimg.cc/SKcgQrKX/openart-image-CVX2wu-Ks-1775830140914-raw-Photoroom.png',
-        vibrate: [200, 100, 200],
-        tag: 'patio-notification',
-        renotify: true
-      };
+  // 1. Visual local feedback only (polite check: only display local notification if tab is focused)
+  if ('Notification' in window && window.Notification.permission === 'granted' && document.visibilityState === 'visible') {
+    const options = {
+      body,
+      icon: 'https://i.postimg.cc/SKcgQrKX/openart-image-CVX2wu-Ks-1775830140914-raw-Photoroom.png',
+      badge: 'https://i.postimg.cc/SKcgQrKX/openart-image-CVX2wu-Ks-1775830140914-raw-Photoroom.png',
+      vibrate: [200, 100, 200],
+      tag: 'patio-notification',
+      renotify: true
+    };
 
-      // Try service worker first as it is generally more stable in PWA environments
-      if ('serviceWorker' in navigator) {
-        try {
-          const registration = await navigator.serviceWorker.ready;
-          if (registration && 'showNotification' in registration) {
-            await registration.showNotification(title, options);
-          }
-        } catch (swError) {
-          console.warn('Service Worker notification failed, falling back to window.Notification', swError);
-          if (typeof NotificationClass === 'function' && NotificationClass.prototype) {
-            try {
-              new (NotificationClass as any)(title, options);
-            } catch (e) {}
-          }
-        }
-      } else {
-        if (typeof NotificationClass === 'function' && NotificationClass.prototype) {
-          try {
-            new (NotificationClass as any)(title, options);
-          } catch (e) {}
-        }
-      }
-    }
-  } catch (globalError) {
-    console.warn('Global notification error', globalError);
-  }
-
-  // Trigger backend API to broadcast to all push subscriptions (notifying closed apps!)
-  try {
-    let excludeEndpoint: string | null = null;
     if ('serviceWorker' in navigator) {
       try {
         const registration = await navigator.serviceWorker.ready;
-        if (registration && registration.pushManager) {
-          const subscription = await registration.pushManager.getSubscription();
-          if (subscription) {
-            excludeEndpoint = subscription.endpoint;
-          }
+        if (registration && 'showNotification' in registration) {
+          await registration.showNotification(title, options);
         }
-      } catch (swErr) {
-        console.warn('[INSTRUMENTAÇÃO CLIENTE] Não foi possível ler subscrição atual para exclusão:', swErr);
+      } catch (swError) {
+        try {
+          new window.Notification(title, options);
+        } catch (e) {}
       }
+    } else {
+      try {
+        new window.Notification(title, options);
+      } catch (e) {}
     }
+  }
 
-    const userOriginated = auth?.currentUser?.email || auth?.currentUser?.uid || "Desconhecido/Anônimo";
-    const targetUrl = `${window.location.origin}/api/notifications/notify-all`;
-    const requestMethod = 'POST';
-    const payload = { title, body, excludeEndpoint, userOriginated };
-
-    console.log(`\n=============================================================`);
-    console.log(`[INSTRUMENTAÇÃO CLIENTE] INICIANDO REQUISIÇÃO DE BROADCAST (ETAPA 1)`);
-    console.log(`- URL Completa Utilizada: ${targetUrl}`);
-    console.log(`- Método HTTP: ${requestMethod}`);
-    console.log(`- Usuário de Origem: ${userOriginated}`);
-    console.log(`- Payload Enviado:`, payload);
-    console.log(`=============================================================\n`);
-
-    const reqStartTime = Date.now();
+  // 2. Real-time broadcast to all OTHER devices
+  if (triggerPush) {
     try {
+      const originDeviceId = getOrCreateDeviceId();
+      const originUserEmail = auth?.currentUser?.email || null;
+      const targetUrl = `${window.location.origin}/api/notifications/notify-all`;
+
+      console.log(`[Push Client] Requesting background push broadcast. Origin Device: ${originDeviceId}`);
+
       const res = await fetch(targetUrl, {
-        method: requestMethod,
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({
+          title,
+          body,
+          originDeviceId,
+          originUserEmail
+        })
       });
 
-      const reqDuration = Date.now() - reqStartTime;
-      const responseText = await res.text();
-
-      console.log(`\n=============================================================`);
-      console.log(`[INSTRUMENTAÇÃO CLIENTE] RESPOSTA RECEBIDA DO BACKEND (ETAPA 1)`);
-      console.log(`- Status HTTP da Resposta: ${res.status} (${res.statusText})`);
-      console.log(`- Tempo Total da Requisição: ${reqDuration}ms`);
-      console.log(`- Corpo Completo da Resposta:`, responseText);
-      console.log(`=============================================================\n`);
-
       if (!res.ok) {
-        console.error(`[INSTRUMENTAÇÃO CLIENTE] Falha na chamada de broadcast de notificação push. Status não-ok: ${res.status}`);
+        console.error(`[Push Client] Broadcast failed with status ${res.status}`);
+      } else {
+        const data = await res.json();
+        console.log(`[Push Client] Broadcast processed successfully:`, data);
       }
-    } catch (requestError: any) {
-      const reqDuration = Date.now() - reqStartTime;
-      console.error(`\n=============================================================`);
-      console.error(`[INSTRUMENTAÇÃO CLIENTE] ERRO DE REDE/CONEXÃO NA REQUISIÇÃO (ETAPA 1)`);
-      console.error(`- Tempo até a falha: ${reqDuration}ms`);
-      console.error(`- Detalhes do Erro:`, requestError);
-      console.error(`=============================================================\n`);
-      throw requestError;
+    } catch (err) {
+      console.error('[Push Client] Error sending broadcast request:', err);
     }
-  } catch (err) {
-    console.error('[INSTRUMENTAÇÃO CLIENTE] Erro global no envio de background push:', err);
   }
 }
 
@@ -172,7 +139,7 @@ function urlB64ToUint8Array(base64String: string) {
 }
 
 /**
- * Subscribes the current device to backend Push Notifications
+ * Subscribes the current device to backend Push Notifications.
  */
 export async function subscribeUserToPush(userId?: string | null) {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
@@ -181,7 +148,6 @@ export async function subscribeUserToPush(userId?: string | null) {
   }
 
   try {
-    // Request permission first
     const permission = await window.Notification.requestPermission();
     if (permission !== 'granted') {
       console.warn('Notification permission not granted.');
@@ -190,73 +156,64 @@ export async function subscribeUserToPush(userId?: string | null) {
 
     const registration = await navigator.serviceWorker.ready;
     if (!registration.pushManager) {
-      console.warn('Push manager is not available in service worker registration.');
+      console.warn('Push manager is not available.');
       return;
     }
 
-    // Try to get existing subscription
+    const deviceId = getOrCreateDeviceId();
+    const userAgent = navigator.userAgent || '';
+    const platform = (navigator as any).userAgentData?.platform || navigator.platform || 'unknown';
+    const appVersion = '1.0.0';
+
     let subscription = await registration.pushManager.getSubscription();
 
-    // Fetch dynamic VAPID public key from backend
+    // Fetch latest VAPID key
     const keyResponse = await fetch('/api/notifications/vapid-public-key');
     const keyData = await keyResponse.json();
     const applicationServerKey = urlB64ToUint8Array(keyData.publicKey);
 
-    // To prevent signature/key mismatch errors from legacy containers or previous VAPID iterations,
-    // we unsubscribe any existing subscription on this browser before making a fresh registration.
+    // Roll over existing subscription to avoid mismatches
     if (subscription) {
       try {
         await subscription.unsubscribe();
       } catch (unsubErr) {
-        console.warn('Error rolling over old subscription keys:', unsubErr);
+        console.warn('Error unsubscribing old subscription:', unsubErr);
       }
     }
 
-    // Create a fresh subscription with the latest persistent server public key
     subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey
     });
 
-    // Save directly to Firestore from the client (failsafe & authenticated)
-    try {
-      const safeId = btoa(subscription.endpoint)
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/, '');
-      const plainSub = JSON.parse(JSON.stringify(subscription));
-      try {
-        await setDoc(doc(db, 'push_subscriptions', safeId), {
-          subscription: plainSub,
-          userId: userId || "",
-          updatedAt: new Date().toISOString()
-        });
-      } catch (fsErr) {
-        handleFirestoreError(fsErr, OperationType.WRITE, `push_subscriptions/${safeId}`);
-      }
-      console.log('Inscrição persistida com sucesso no Firestore diretamente do dispositivo logado.');
-    } catch (dbErr) {
-      console.error('Falha ao gravar inscrição diretamente no Firestore:', dbErr);
-    }
+    const safeId = btoa(subscription.endpoint)
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+      
+    const plainSub = JSON.parse(JSON.stringify(subscription));
 
-    // Synchronize subscription details to backend database (so backend container knows it)
+    // Server-side registration using Admin SDK API
     await fetch('/api/notifications/subscribe', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        subscription,
-        userId: userId || null
+        subscription: plainSub,
+        userId: userId || "",
+        deviceId,
+        metadata: {
+          platform,
+          userAgent,
+          appVersion
+        }
       })
     });
 
-    console.log('Dispositivos inscrito com sucesso em notificações push em segundo plano!');
-
-    // Trigger full background synchronization to update the backend cache table
-    await syncPushSubscriptionsWithServer();
+    console.log('[Push Client] Device successfully subscribed to push notifications!');
   } catch (err) {
-    console.error('Failed to subscribe user to push notifications:', err);
+    console.error('[Push Client] Failed to subscribe device to push notifications:', err);
   }
 }
 
@@ -264,7 +221,6 @@ export async function subscribeUserToPush(userId?: string | null) {
  * Utility to send WhatsApp notifications via the backend API.
  */
 export async function sendWhatsAppNotification(message: string, to?: string) {
-  // WhatsApp is currently disabled by user request, but keeping the logic for future use
   console.log('WhatsApp notification bypassed:', message);
   return { success: true, status: 'bypassed' };
 }

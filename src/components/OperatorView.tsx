@@ -186,7 +186,7 @@ export function OperatorView({ mode = 'full' }: OperatorViewProps) {
       const notificationTitle = `🚨 ${severityLabels[severity]}`;
       const notificationBody = `Máquina: ${machineName}\nOperador: ${profile.displayName || profile.email}\nProblema: ${description}\nStatus: ${statusLabels[severity]}`;
 
-      sendLocalNotification(notificationTitle, notificationBody);
+      sendLocalNotification(notificationTitle, notificationBody, true);
       
       sendWhatsAppNotification(
         `🚨 *${severityLabels[severity]}*\n\n` +

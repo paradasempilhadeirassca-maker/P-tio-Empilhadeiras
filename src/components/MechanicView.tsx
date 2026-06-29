@@ -215,7 +215,8 @@ export function MechanicView() {
       
       sendLocalNotification(
         `🔧 MANUTENÇÃO INICIADA`,
-        `Máquina: ${machineName}\nMecânico: ${profile.displayName || profile.email}`
+        `Máquina: ${machineName}\nMecânico: ${profile.displayName || profile.email}`,
+        true
       );
 
       sendWhatsAppNotification(
@@ -373,7 +374,8 @@ export function MechanicView() {
       
       sendLocalNotification(
         `✅ MANUTENÇÃO FINALIZADA`,
-        `Máquina: ${machineName}\nMecânico: ${profile.displayName || profile.email}\nReparo: ${repairNotes}`
+        `Máquina: ${machineName}\nMecânico: ${profile.displayName || profile.email}\nReparo: ${repairNotes}`,
+        true
       );
 
       sendWhatsAppNotification(`✅ *MANUTENÇÃO CONCLUÍDA*\n\nMáquina: ${machineName}\nStatus: Disponível\nNotas: ${repairNotes}`);
