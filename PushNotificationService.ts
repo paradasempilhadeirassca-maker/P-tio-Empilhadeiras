@@ -1,5 +1,16 @@
-import { initializeApp, getApps, getApp } from "firebase-admin/app";
-import { getFirestore, QueryDocumentSnapshot } from "firebase-admin/firestore";
+import { initializeApp, getApps, getApp } from "firebase/app";
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  getDoc, 
+  getDocs, 
+  setDoc, 
+  updateDoc, 
+  deleteDoc, 
+  query, 
+  where 
+} from "firebase/firestore";
 import webpush from "web-push";
 import fs from "fs";
 import path from "path";
@@ -9,13 +20,92 @@ const firebaseConfig = JSON.parse(
   fs.readFileSync(path.join(process.cwd(), "firebase-applet-config.json"), "utf8")
 );
 
-// Initialize Firebase Admin SDK if not already done
-const app = getApps().length === 0 ? initializeApp({
-  projectId: firebaseConfig.projectId
-}) : getApp();
+// Initialize Firebase Client SDK if not already done
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+const firestoreInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 
-// Get the Firestore database reference targeting the correct custom database ID!
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// Compatibility wrapper to make standard Firestore Client SDK act like the Node Admin SDK
+export const db = {
+  collection(colName: string) {
+    return {
+      doc(docId: string) {
+        return {
+          async get() {
+            const d = await getDoc(doc(firestoreInstance, colName, docId));
+            return {
+              exists: d.exists(),
+              id: d.id,
+              ref: {
+                async delete() {
+                  await deleteDoc(doc(firestoreInstance, colName, docId));
+                }
+              },
+              data() {
+                return d.data();
+              }
+            };
+          },
+          async set(data: any) {
+            await setDoc(doc(firestoreInstance, colName, docId), data);
+          },
+          async update(data: any) {
+            await updateDoc(doc(firestoreInstance, colName, docId), data);
+          },
+          async delete() {
+            await deleteDoc(doc(firestoreInstance, colName, docId));
+          }
+        };
+      },
+      
+      async get() {
+        const q = query(collection(firestoreInstance, colName));
+        const snapshot = await getDocs(q);
+        return {
+          size: snapshot.size,
+          docs: snapshot.docs.map(d => ({
+            id: d.id,
+            ref: {
+              async delete() {
+                await deleteDoc(doc(firestoreInstance, colName, d.id));
+              }
+            },
+            data() {
+              return d.data();
+            }
+          }))
+        };
+      },
+
+      where(field: string, op: any, value: any) {
+        const constraints = [where(field, op, value)];
+        return {
+          where(f2: string, op2: any, v2: any) {
+            constraints.push(where(f2, op2, v2));
+            return this;
+          },
+          async get() {
+            const q = query(collection(firestoreInstance, colName), ...constraints);
+            const snapshot = await getDocs(q);
+            return {
+              size: snapshot.size,
+              docs: snapshot.docs.map(d => ({
+                id: d.id,
+                ref: {
+                  async delete() {
+                    await deleteDoc(doc(firestoreInstance, colName, d.id));
+                  }
+                },
+                data() {
+                  return d.data();
+                }
+              }))
+            };
+          }
+        };
+      }
+    };
+  }
+};
 
 export interface PushSubscriptionFields {
   endpoint: string;
@@ -312,7 +402,7 @@ export class PushNotificationService {
     await this.initVapidKeys();
 
     // 1. Fetch all active subscriptions from Firestore
-    let allDocs: QueryDocumentSnapshot[] = [];
+    let allDocs: any[] = [];
     try {
       const querySnap = await db.collection("push_subscriptions")
         .where("active", "==", true)
