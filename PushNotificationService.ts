@@ -253,6 +253,20 @@ export class PushNotificationService {
       console.log(`- Resultado da gravação: SUCESSO (Firestore)`);
       console.log(`- ID do documento criado: "${safeDocId}"`);
       console.log(`=============================================================\n`);
+
+      // 8. Immediate verification read
+      try {
+        console.log(`[Push Service - DIAGNOSTIC] Lendo a coleção push_subscriptions para verificação imediata...`);
+        const snapshot = await db.collection("push_subscriptions").get();
+        const docIds = snapshot.docs.map(doc => doc.id);
+        console.log(`\n=================== FIRESTORE CONFIRMATION ===================`);
+        console.log(`- Quantidade de documentos na coleção: ${snapshot.size}`);
+        console.log(`- IDs encontrados:`, JSON.stringify(docIds, null, 2));
+        console.log(`==============================================================\n`);
+      } catch (readErr: any) {
+        console.error(`[Push Service - DIAGNOSTIC ERROR] Falha ao ler a coleção para confirmação:`, readErr.stack || readErr);
+      }
+
     } catch (dbErr: any) {
       console.error(`\n=============================================================`);
       console.error(`[Push Service - REGISTRATION FAILURE]`);
@@ -260,7 +274,7 @@ export class PushNotificationService {
       console.error(`- UserId: "${userId || "Anonymous"}"`);
       console.error(`- Endpoint: "${subscription.endpoint}"`);
       console.error(`- Resultado da gravação: ERRO`);
-      console.error(`- Detalhes do Erro:`, dbErr.message || dbErr);
+      console.error(`- Stack do Erro:`, dbErr.stack || dbErr);
       console.error(`=============================================================\n`);
       throw dbErr;
     }
