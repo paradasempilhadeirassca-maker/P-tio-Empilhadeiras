@@ -18,7 +18,7 @@ import { PartsInventory } from './components/PartsInventory';
 import { ChecklistView } from './components/ChecklistView';
 import { FleetManagement } from './components/FleetManagement';
 import { MechanicAvailabilityView } from './components/MechanicAvailabilityView';
-import { requestNotificationPermission, sendLocalNotification, subscribeUserToPush, syncPushSubscriptionsWithServer } from './lib/notifications';
+import { requestNotificationPermission, sendLocalNotification, subscribeUserToPush, syncPushSubscriptionsWithServer, syncPendingNotifications } from './lib/notifications';
 import { 
   Truck, 
   ArrowLeft,
@@ -69,11 +69,18 @@ function AppContent() {
   }, [uniqueForklifts, loading]);
 
   useEffect(() => {
-    const handleOnline = () => setIsOffline(false);
+    const handleOnline = () => {
+      setIsOffline(false);
+      console.log('[App] Conexão reestabelecida. Sincronizando notificações pendentes...');
+      syncPendingNotifications().catch(console.error);
+    };
     const handleOffline = () => setIsOffline(true);
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+
+    // Sincroniza qualquer notificação offline pendente na inicialização do app
+    syncPendingNotifications().catch(console.error);
 
     return () => {
       window.removeEventListener('online', handleOnline);

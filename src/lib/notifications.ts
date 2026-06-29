@@ -51,6 +51,122 @@ export async function requestNotificationPermission() {
 }
 
 /**
+ * Interface representing a notification in the offline queue.
+ */
+interface QueuedNotification {
+  id: string;
+  title: string;
+  body: string;
+  originDeviceId: string;
+  originUserEmail: string | null;
+  timestamp: number;
+}
+
+/**
+ * Retrieve the current queue of pending push notifications from localStorage.
+ */
+function getQueuedNotifications(): QueuedNotification[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const stored = localStorage.getItem('pending_push_notifications');
+    return stored ? JSON.parse(stored) : [];
+  } catch (e) {
+    console.error('[Push Queue] Erro ao carregar fila offline:', e);
+    return [];
+  }
+}
+
+/**
+ * Save the queue of pending push notifications to localStorage.
+ */
+function saveQueuedNotifications(notifications: QueuedNotification[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem('pending_push_notifications', JSON.stringify(notifications));
+  } catch (e) {
+    console.error('[Push Queue] Erro ao salvar fila offline:', e);
+  }
+}
+
+/**
+ * Add a push notification to the offline queue.
+ */
+export function queueNotification(
+  title: string,
+  body: string,
+  originDeviceId: string,
+  originUserEmail: string | null
+) {
+  const queue = getQueuedNotifications();
+  const newItem: QueuedNotification = {
+    id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'q_' + Math.random().toString(36).substring(2, 11),
+    title,
+    body,
+    originDeviceId,
+    originUserEmail,
+    timestamp: Date.now()
+  };
+  queue.push(newItem);
+  saveQueuedNotifications(queue);
+  console.log(`[Push Queue] Notificação adicionada à fila offline (Total pendentes: ${queue.length}): "${title}"`);
+}
+
+/**
+ * Sends all pending offline notifications to the backend.
+ * This is triggered automatically when the device transitions to online, and at app startup.
+ */
+export async function syncPendingNotifications() {
+  if (typeof window === 'undefined') return;
+  if (!navigator.onLine) {
+    console.log('[Push Queue] Dispositivo offline. Sincronização de notificações suspensa.');
+    return;
+  }
+
+  const queue = getQueuedNotifications();
+  if (queue.length === 0) {
+    return;
+  }
+
+  console.log(`[Push Queue] Sincronização ativada: processando ${queue.length} notificações pendentes...`);
+  const remaining: QueuedNotification[] = [];
+
+  for (const item of queue) {
+    try {
+      const targetUrl = `${window.location.origin}/api/notifications/notify-all`;
+      const res = await fetch(targetUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          title: item.title,
+          body: item.body,
+          originDeviceId: item.originDeviceId,
+          originUserEmail: item.originUserEmail
+        })
+      });
+
+      if (res.ok) {
+        console.log(`[Push Queue] Notificação pendente enviada com sucesso: "${item.title}"`);
+      } else {
+        console.warn(`[Push Queue] Falha ao enviar notificação pendente "${item.title}" (Status HTTP: ${res.status}). Mantendo na fila.`);
+        remaining.push(item);
+      }
+    } catch (err) {
+      console.error(`[Push Queue] Erro de conexão ao tentar enviar notificação "${item.title}". Mantendo na fila para nova tentativa.`, err);
+      remaining.push(item);
+    }
+  }
+
+  saveQueuedNotifications(remaining);
+  if (remaining.length === 0) {
+    console.log('[Push Queue] Todas as notificações offline pendentes foram enviadas com sucesso! 🎉');
+  } else {
+    console.log(`[Push Queue] Fila atualizada: restam ${remaining.length} notificações pendentes.`);
+  }
+}
+
+/**
  * Send a local browser notification for immediate visual feedback (if focused).
  * If triggerPush is true, also invokes the server-side notify-all endpoint to deliver in real-time.
  */
@@ -86,36 +202,46 @@ export async function sendLocalNotification(title: string, body: string, trigger
     }
   }
 
-  // 2. Real-time broadcast to all OTHER devices
+  // 2. Real-time broadcast to all OTHER devices (or queue if offline)
   if (triggerPush) {
-    try {
-      const originDeviceId = getOrCreateDeviceId();
-      const originUserEmail = auth?.currentUser?.email || null;
-      const targetUrl = `${window.location.origin}/api/notifications/notify-all`;
+    const originDeviceId = getOrCreateDeviceId();
+    const originUserEmail = auth?.currentUser?.email || null;
 
-      console.log(`[Push Client] Requesting background push broadcast. Origin Device: ${originDeviceId}`);
+    if (!navigator.onLine) {
+      console.log(`[Push Client] Dispositivo offline. Enfileirando notificação de push: "${title}"`);
+      queueNotification(title, body, originDeviceId, originUserEmail);
+    } else {
+      try {
+        const targetUrl = `${window.location.origin}/api/notifications/notify-all`;
+        console.log(`[Push Client] Requesting background push broadcast. Origin Device: ${originDeviceId}`);
 
-      const res = await fetch(targetUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          title,
-          body,
-          originDeviceId,
-          originUserEmail
-        })
-      });
+        const res = await fetch(targetUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            title,
+            body,
+            originDeviceId,
+            originUserEmail
+          })
+        });
 
-      if (!res.ok) {
-        console.error(`[Push Client] Broadcast failed with status ${res.status}`);
-      } else {
-        const data = await res.json();
-        console.log(`[Push Client] Broadcast processed successfully:`, data);
+        if (!res.ok) {
+          console.error(`[Push Client] Broadcast failed with status ${res.status}. Enfileirando para envio posterior.`);
+          queueNotification(title, body, originDeviceId, originUserEmail);
+        } else {
+          const data = await res.json();
+          console.log(`[Push Client] Broadcast processed successfully:`, data);
+          
+          // Try to sync any older pending notifications since we verified we are online and active
+          syncPendingNotifications().catch(console.error);
+        }
+      } catch (err) {
+        console.error('[Push Client] Error sending broadcast request, enqueuing for later:', err);
+        queueNotification(title, body, originDeviceId, originUserEmail);
       }
-    } catch (err) {
-      console.error('[Push Client] Error sending broadcast request:', err);
     }
   }
 }
