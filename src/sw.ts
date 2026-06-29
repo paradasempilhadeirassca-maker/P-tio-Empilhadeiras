@@ -8,13 +8,20 @@ precacheAndRoute(self.__WB_MANIFEST || []);
 
 // Listen for push notifications from backend (even if app is closed!)
 self.addEventListener('push', (event) => {
+  console.log('[Service Worker] Evento "push" recebido!', event);
+
   let data = { title: 'Pátio', body: '' };
   try {
     if (event.data) {
       data = event.data.json();
+      console.log('[Service Worker] Payload JSON recebido e decodificado com sucesso:', data);
+    } else {
+      console.warn('[Service Worker] Evento push sem dados de payload.');
     }
   } catch (err) {
-    data = { title: 'Pátio', body: event.data ? event.data.text() : '' };
+    const textData = event.data ? event.data.text() : '';
+    data = { title: 'Pátio', body: textData };
+    console.warn('[Service Worker] Erro ao decodificar payload JSON (usando texto puro):', err, 'Texto:', textData);
   }
 
   const options = {
@@ -25,25 +32,40 @@ self.addEventListener('push', (event) => {
     data: '/',
   };
 
+  console.log('[Service Worker] Chamando showNotification com Título:', data.title, 'e Opções:', options);
+
   event.waitUntil(
     self.registration.showNotification(data.title, options)
+      .then(() => {
+        console.log('[Service Worker] showNotification exibido com sucesso para o usuário!');
+      })
+      .catch((err) => {
+        console.error('[Service Worker] Erro ao disparar showNotification:', err);
+      })
   );
 });
 
 // Click action - focus or open the app
 self.addEventListener('notificationclick', (event) => {
+  console.log('[Service Worker] Evento "notificationclick" acionado pelo usuário!', event);
   event.notification.close();
+  console.log('[Service Worker] Notificação fechada via notification.close()');
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      console.log(`[Service Worker] Clientes de janela encontrados ativos: ${clientList.length}`);
       for (const client of clientList) {
         if ('focus' in client) {
+          console.log('[Service Worker] Focando em janela ativa existente...');
           return client.focus();
         }
       }
       if (self.clients.openWindow) {
+        console.log('[Service Worker] Nenhuma janela ativa focável. Abrindo nova janela do app...');
         return self.clients.openWindow('/');
       }
+    }).catch((err) => {
+      console.error('[Service Worker] Erro ao processar click da notificação:', err);
     })
   );
 });

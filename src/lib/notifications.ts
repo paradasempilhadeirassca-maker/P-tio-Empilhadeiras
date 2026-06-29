@@ -1,4 +1,4 @@
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { db, handleFirestoreError, OperationType, auth } from '../firebase';
 import { doc, setDoc, collection, getDocs } from 'firebase/firestore';
 
 /**
@@ -8,43 +8,9 @@ export async function syncPushSubscriptionsWithServer() {
   if (typeof window === 'undefined') return;
 
   try {
-    let querySnapshot;
-    try {
-      querySnapshot = await getDocs(collection(db, 'push_subscriptions'));
-    } catch (fsErr) {
-      handleFirestoreError(fsErr, OperationType.LIST, 'push_subscriptions');
-    }
-    const subscriptions: any[] = [];
-    querySnapshot.forEach((doc) => {
-      const data = doc.data();
-      if (data && data.subscription) {
-        subscriptions.push({
-          id: doc.id,
-          subscription: data.subscription,
-          userId: data.userId || "",
-          updatedAt: data.updatedAt || ""
-        });
-      }
-    });
-
-    console.log(`[Push Sync] Encontradas ${subscriptions.length} inscrições ativas no Firestore. Atualizando o cache do servidor...`);
-
-    const res = await fetch('/api/notifications/sync-subscriptions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ subscriptions })
-    });
-
-    if (res.ok) {
-      const resData = await res.json();
-      console.log(`[Push Sync] Sincronização com o servidor concluída com sucesso! Total no cache: ${resData.count}`);
-    } else {
-      console.warn(`[Push Sync] Falha na resposta de sincronização do servidor:`, res.status);
-    }
+    console.log('[Push Sync] Servidor agora carrega e sincroniza inscrições de forma autônoma diretamente do Firestore.');
   } catch (err) {
-    console.error('[Push Sync] Falha ao sincronizar inscrições do Firestore com o servidor:', err);
+    console.error('[Push Sync] Falha ao ignorar sincronização redundante:', err);
   }
 }
 
@@ -122,12 +88,29 @@ export async function sendLocalNotification(title: string, body: string) {
 
   // Trigger backend API to broadcast to all push subscriptions (notifying closed apps!)
   try {
+    let excludeEndpoint: string | null = null;
+    if ('serviceWorker' in navigator) {
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        if (registration && registration.pushManager) {
+          const subscription = await registration.pushManager.getSubscription();
+          if (subscription) {
+            excludeEndpoint = subscription.endpoint;
+          }
+        }
+      } catch (swErr) {
+        console.warn('Could not read existing push subscription to exclude:', swErr);
+      }
+    }
+
+    const userOriginated = auth?.currentUser?.email || auth?.currentUser?.uid || "Desconhecido/Anônimo";
+
     fetch('/api/notifications/notify-all', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ title, body })
+      body: JSON.stringify({ title, body, excludeEndpoint, userOriginated })
     }).catch(err => console.error('Error broadcasting notification to backend:', err));
   } catch (err) {
     console.error('Failed to trigger background notification broadcast:', err);

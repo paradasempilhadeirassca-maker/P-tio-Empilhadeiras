@@ -431,18 +431,88 @@ async function startServer() {
 
   // Send/Broadcast to all API (For notifying all devices even in background)
   app.post("/api/notifications/notify-all", async (req, res) => {
-    const { title, body } = req.body;
+    const startTime = Date.now();
+    const { title, body, excludeEndpoint, userOriginated } = req.body;
     if (!title) {
       return res.status(400).json({ success: false, error: "Title is required" });
     }
 
-    console.log(`\n--- INICIANDO BROADCAST DE NOTIFICAÇÃO ---`);
-    console.log(`Título: "${title}"`);
-    console.log(`Mensagem: "${body || ""}"`);
+    console.log(`\n=============================================================`);
+    console.log(`[LOG DETALHADO] NOVO EVENTO RECEBIDO: /api/notifications/notify-all`);
+    console.log(`- Horário de Recebimento: ${new Date().toISOString()}`);
+    console.log(`- Usuário Origem do Evento: "${userOriginated || "Desconhecido/Anônimo"}"`);
+    console.log(`- Título da Notificação: "${title}"`);
+    console.log(`- Mensagem da Notificação: "${body || ""}"`);
+    
+    const maskEndpoint = (ep: string | null) => {
+      if (!ep) return "Nenhum";
+      if (ep.length <= 30) return ep;
+      return `${ep.slice(0, 20)}...${ep.slice(-15)}`;
+    };
 
-    // Load active subscriptions from local file cache (which bypasses any Firestore REST auth restrictions)
-    const subscriptions = readLocalSubscriptions();
-    console.log(`Subscriptions encontradas: ${subscriptions.length}`);
+    console.log(`- Endpoint do Usuário Origem (Excluído): ${maskEndpoint(excludeEndpoint)}`);
+    console.log(`=============================================================\n`);
+
+    let firestoreCount = 0;
+    let subscriptions: any[] = [];
+
+    // 1. Core database retrieval: Load subscriptions directly from remote persistent Firestore
+    try {
+      console.log("[LOG DETALHADO] Solicitando inscrições ativas ao Firestore remoto...");
+      const fsDocsResult = await getDocsRest("push_subscriptions");
+      if (fsDocsResult && fsDocsResult.docs) {
+        fsDocsResult.docs.forEach((doc: any) => {
+          const docData = doc.data();
+          if (docData && docData.subscription && docData.subscription.endpoint) {
+            subscriptions.push({
+              id: doc.id,
+              subscription: docData.subscription,
+              userId: docData.userId || "",
+              updatedAt: docData.updatedAt || ""
+            });
+          }
+        });
+        firestoreCount = subscriptions.length;
+        console.log(`[LOG DETALHADO] Quantidade total de subscriptions encontradas no Firestore: ${firestoreCount}`);
+      }
+    } catch (fsErr: any) {
+      console.warn("[LOG DETALHADO] Erro ao carregar do Firestore via REST:", fsErr.message);
+    }
+
+    // 2. Fallback: Load and merge from local file cache database (.push-subscriptions.json)
+    let localCount = 0;
+    try {
+      const localSubs = readLocalSubscriptions();
+      localCount = localSubs.length;
+      console.log(`[LOG DETALHADO] Inscrições encontradas no cache local de segurança: ${localCount}`);
+      localSubs.forEach(localSub => {
+        if (!localSub.subscription || !localSub.subscription.endpoint) return;
+        const exists = subscriptions.some(s => s.subscription.endpoint === localSub.subscription.endpoint);
+        if (!exists) {
+          subscriptions.push(localSub);
+        }
+      });
+    } catch (localErr) {
+      console.error("[LOG DETALHADO] Erro ao carregar inscrições locais:", localErr);
+    }
+
+    const beforeFilteringCount = subscriptions.length;
+    console.log(`[LOG DETALHADO] Quantidade total de inscrições unificadas (sem duplicidades): ${beforeFilteringCount}`);
+
+    // 3. Filter out the excludeEndpoint if specified
+    if (excludeEndpoint) {
+      subscriptions = subscriptions.filter(sub => sub.subscription.endpoint !== excludeEndpoint);
+      console.log(`[LOG DETALHADO] Filtrando dispositivo de origem. Inscrições restantes: ${subscriptions.length}`);
+    }
+
+    console.log(`\n--- LISTA DE DISPOSITIVOS DESTINATÁRIOS ---`);
+    subscriptions.forEach((sub, index) => {
+      console.log(`Dispositivo #${index + 1}:`);
+      console.log(`  - ID: ${sub.id}`);
+      console.log(`  - Proprietário (User ID): ${sub.userId || "Desconhecido"}`);
+      console.log(`  - Endpoint mascarado: ${maskEndpoint(sub.subscription.endpoint)}`);
+    });
+    console.log(`-------------------------------------------\n`);
 
     let successCount = 0;
     let failureCount = 0;
@@ -451,25 +521,28 @@ async function startServer() {
     const payload = JSON.stringify({ title, body: body || "" });
 
     const sendPromises = subscriptions.map(async (sub) => {
-      const displayEndpoint = sub.subscription.endpoint.slice(0, 50);
+      const maskedEp = maskEndpoint(sub.subscription.endpoint);
       const targetUser = sub.userId || "Anônimo/Desconhecido";
-      console.log(`Enviando para o dispositivo do usuário [${targetUser}] | ID: ${sub.id} | Endpoint: ${displayEndpoint}...`);
+      console.log(`[LOG DETALHADO] Iniciando envio de notificação para [${targetUser}] | ID: ${sub.id} | Endpoint: ${maskedEp}...`);
+      
       try {
-        await webpush.sendNotification(sub.subscription, payload);
+        const response = await webpush.sendNotification(sub.subscription, payload);
         successCount++;
-        console.log(`Resultado individual para [${targetUser}]: Sucesso`);
+        // WebPush usually returns success with standard HTTP 201/200 code
+        const statusCode = (response as any)?.statusCode || 201;
+        console.log(`[LOG DETALHADO] Resultado individual para [${targetUser}]: SUCESSO | Código HTTP: ${statusCode}`);
       } catch (err: any) {
         failureCount++;
+        const statusCode = err.statusCode || "Desconhecido";
         const isExpired = err.statusCode === 410 || err.statusCode === 404;
-        const errMsg = err.message || `Status ${err.statusCode}`;
+        const errMsg = err.message || `Erro de envio`;
         
-        console.error(`Resultado individual para [${targetUser}]: Erro ${err.statusCode || 'Desconhecido'} - ${errMsg}`);
+        console.error(`[LOG DETALHADO] Resultado individual para [${targetUser}]: FALHA | Código HTTP: ${statusCode} | Mensagem: ${errMsg}`);
 
         if (isExpired) {
-          console.log(`Detectado endpoint expirado ou inválido (404/410). Programando remoção: ${sub.id}`);
+          console.log(`[LOG DETALHADO] Detectado endpoint expirado ou inválido (404/410). Programando remoção: ${sub.id}`);
           unsubscribedDocIds.push(sub.id);
           
-          // Try executing Firestore delete fallback (safely ignored if denied)
           try {
             const deleteUrl = `${FIRESTORE_BASE_URL}/push_subscriptions/${sub.id}?key=${FIRESTORE_API_KEY}`;
             fetch(deleteUrl, { method: 'DELETE' }).catch(() => {});
@@ -483,20 +556,36 @@ async function startServer() {
 
       // Perform automatic cleanups on expired/invalid subscriptions from local file cache database
       if (unsubscribedDocIds.length > 0) {
-        const remainingSubs = subscriptions.filter(s => !unsubscribedDocIds.includes(s.id));
+        for (const expId of unsubscribedDocIds) {
+          try {
+            const deleteUrl = `${FIRESTORE_BASE_URL}/push_subscriptions/${expId}?key=${FIRESTORE_API_KEY}`;
+            await fetch(deleteUrl, { method: 'DELETE' });
+            console.log(`[LOG DETALHADO] Removido do Firestore remoto: ${expId}`);
+          } catch (e) {}
+        }
+
+        const remainingSubs = readLocalSubscriptions().filter(s => !unsubscribedDocIds.includes(s.id));
         writeLocalSubscriptions(remainingSubs);
-        console.log(`[Limpeza automática] Removidas ${unsubscribedDocIds.length} inscrições inválidas ou expiradas.`);
+        console.log(`[LOG DETALHADO] Limpeza concluída de ${unsubscribedDocIds.length} inscrições inválidas.`);
       }
 
-      console.log(`--- FIM DO BROADCAST | Sucesso: ${successCount} | Falha: ${failureCount} ---\n`);
+      const totalDuration = Date.now() - startTime;
+      console.log(`\n=============================================================`);
+      console.log(`[LOG DETALHADO] CONCLUSÃO DO PROCESSAMENTO (BROADCAST)`);
+      console.log(`- Tempo Total de Processamento: ${totalDuration}ms`);
+      console.log(`- Quantidade de Sucessos: ${successCount}`);
+      console.log(`- Quantidade de Falhas: ${failureCount}`);
+      console.log(`=============================================================\n`);
+
       res.json({
         success: true,
         subscriptionsCount: subscriptions.length,
         sucessos: successCount,
-        falhas: failureCount
+        falhas: failureCount,
+        durationMs: totalDuration
       });
     } catch (error: any) {
-      console.error("Error broadcasting push:", error);
+      console.error("[LOG DETALHADO] Erro crítico no envio geral:", error);
       res.status(500).json({ success: false, error: error.message });
     }
   });
