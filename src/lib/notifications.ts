@@ -249,6 +249,7 @@ export async function subscribeUserToPush(userId?: string | null) {
     console.log('[Push Client] Inscrição registrada com sucesso no backend!', resData);
   } catch (err) {
     console.error('[Push Client] Falha ao inscrever o dispositivo:', err);
+    throw err;
   }
 }
 
