@@ -243,8 +243,27 @@ export class PushNotificationService {
     };
 
     // Save to Firestore directly using the Admin SDK
-    await docRef.set(docData);
-    console.log(`[Push Service] Device registered successfully in Firestore with Doc ID: ${safeDocId}`);
+    try {
+      await docRef.set(docData);
+      console.log(`\n=============================================================`);
+      console.log(`[Push Service - REGISTRATION SUCCESS]`);
+      console.log(`- DeviceId: "${deviceId}"`);
+      console.log(`- UserId: "${userId || "Anonymous"}"`);
+      console.log(`- Endpoint: "${subscription.endpoint}"`);
+      console.log(`- Resultado da gravação: SUCESSO (Firestore)`);
+      console.log(`- ID do documento criado: "${safeDocId}"`);
+      console.log(`=============================================================\n`);
+    } catch (dbErr: any) {
+      console.error(`\n=============================================================`);
+      console.error(`[Push Service - REGISTRATION FAILURE]`);
+      console.error(`- DeviceId: "${deviceId}"`);
+      console.error(`- UserId: "${userId || "Anonymous"}"`);
+      console.error(`- Endpoint: "${subscription.endpoint}"`);
+      console.error(`- Resultado da gravação: ERRO`);
+      console.error(`- Detalhes do Erro:`, dbErr.message || dbErr);
+      console.error(`=============================================================\n`);
+      throw dbErr;
+    }
   }
 
   /**

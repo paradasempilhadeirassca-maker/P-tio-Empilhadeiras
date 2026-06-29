@@ -142,21 +142,32 @@ function urlB64ToUint8Array(base64String: string) {
  * Subscribes the current device to backend Push Notifications.
  */
 export async function subscribeUserToPush(userId?: string | null) {
-  if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
-    console.warn('Push messaging is not supported in this browser.');
+  console.log('[Push Client] Iniciando tentativa de inscrição para userId:', userId);
+  if (typeof window === 'undefined') {
+    console.warn('[Push Client] Inscrição ignorada: ambiente não é window.');
+    return;
+  }
+  if (!('serviceWorker' in navigator)) {
+    console.warn('[Push Client] Inscrição ignorada: navigator.serviceWorker não disponível.');
+    return;
+  }
+  if (!('PushManager' in window)) {
+    console.warn('[Push Client] Inscrição ignorada: PushManager não está no objeto window.');
     return;
   }
 
   try {
     const permission = await window.Notification.requestPermission();
+    console.log('[Push Client] Permissão de notificação atual:', permission);
     if (permission !== 'granted') {
-      console.warn('Notification permission not granted.');
+      console.warn('[Push Client] Permissão não concedida.');
       return;
     }
 
+    console.log('[Push Client] Aguardando serviceWorker.ready...');
     const registration = await navigator.serviceWorker.ready;
     if (!registration.pushManager) {
-      console.warn('Push manager is not available.');
+      console.warn('[Push Client] Push manager não disponível no registro do Service Worker.');
       return;
     }
 
@@ -165,26 +176,34 @@ export async function subscribeUserToPush(userId?: string | null) {
     const platform = (navigator as any).userAgentData?.platform || navigator.platform || 'unknown';
     const appVersion = '1.0.0';
 
+    console.log('[Push Client] Obtendo inscrição de push existente...');
     let subscription = await registration.pushManager.getSubscription();
 
     // Fetch latest VAPID key
+    console.log('[Push Client] Buscando chave VAPID pública do servidor...');
     const keyResponse = await fetch('/api/notifications/vapid-public-key');
     const keyData = await keyResponse.json();
+    console.log('[Push Client] Chave VAPID obtida com sucesso:', keyData.publicKey);
     const applicationServerKey = urlB64ToUint8Array(keyData.publicKey);
 
     // Roll over existing subscription to avoid mismatches
     if (subscription) {
       try {
+        console.log('[Push Client] Cancelando inscrição antiga para renovação...');
         await subscription.unsubscribe();
       } catch (unsubErr) {
-        console.warn('Error unsubscribing old subscription:', unsubErr);
+        console.warn('[Push Client] Erro ao cancelar inscrição antiga:', unsubErr);
       }
     }
 
+    console.log('[Push Client] Inscrevendo no PushManager...');
     subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey
     });
+
+    console.log('[Push Client] PushSubscription obtida com sucesso!');
+    console.log('[Push Client] Endpoint recebido:', subscription.endpoint);
 
     const safeId = btoa(subscription.endpoint)
       .replace(/\+/g, '-')
@@ -193,8 +212,16 @@ export async function subscribeUserToPush(userId?: string | null) {
       
     const plainSub = JSON.parse(JSON.stringify(subscription));
 
+    console.log('[Push Client] Preparando para fazer o POST para /api/notifications/subscribe...');
+    console.log('[Push Client] Dados que serão enviados para o backend:', {
+      deviceId,
+      userId,
+      endpoint: subscription.endpoint,
+      safeId
+    });
+
     // Server-side registration using Admin SDK API
-    await fetch('/api/notifications/subscribe', {
+    const response = await fetch('/api/notifications/subscribe', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -211,9 +238,17 @@ export async function subscribeUserToPush(userId?: string | null) {
       })
     });
 
-    console.log('[Push Client] Device successfully subscribed to push notifications!');
+    console.log('[Push Client] Status HTTP retornado do servidor:', response.status);
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Servidor retornou erro ${response.status}: ${errText}`);
+    }
+
+    const resData = await response.json();
+    console.log('[Push Client] Inscrição registrada com sucesso no backend!', resData);
   } catch (err) {
-    console.error('[Push Client] Failed to subscribe device to push notifications:', err);
+    console.error('[Push Client] Falha ao inscrever o dispositivo:', err);
   }
 }
 
