@@ -432,34 +432,40 @@ async function startServer() {
   // Send/Broadcast to all API (For notifying all devices even in background)
   app.post("/api/notifications/notify-all", async (req, res) => {
     const startTime = Date.now();
-    const { title, body, excludeEndpoint, userOriginated } = req.body;
+    const requestTime = new Date().toISOString();
+    const requestIp = req.ip || req.headers["x-forwarded-for"] || req.socket.remoteAddress || "Desconhecido";
+    const requestHeaders = req.headers;
+    const requestBody = req.body;
+    
+    const { title, body, excludeEndpoint, userOriginated } = requestBody;
+
+    console.log(`\n=============================================================`);
+    console.log(`[LOG DETALHADO - ETAPA 2] REQUISIÇÃO RECEBIDA NO SERVIDOR`);
+    console.log(`- Horário: ${requestTime}`);
+    console.log(`- IP de Origem: ${requestIp}`);
+    console.log(`- Headers Recebidos:`, JSON.stringify(requestHeaders, null, 2));
+    console.log(`- Body Completo Recebido:`, JSON.stringify(requestBody, null, 2));
+    console.log(`=============================================================\n`);
+
     if (!title) {
       return res.status(400).json({ success: false, error: "Title is required" });
     }
 
-    console.log(`\n=============================================================`);
-    console.log(`[LOG DETALHADO] NOVO EVENTO RECEBIDO: /api/notifications/notify-all`);
-    console.log(`- Horário de Recebimento: ${new Date().toISOString()}`);
-    console.log(`- Usuário Origem do Evento: "${userOriginated || "Desconhecido/Anônimo"}"`);
-    console.log(`- Título da Notificação: "${title}"`);
-    console.log(`- Mensagem da Notificação: "${body || ""}"`);
-    
     const maskEndpoint = (ep: string | null) => {
       if (!ep) return "Nenhum";
       if (ep.length <= 30) return ep;
-      return `${ep.slice(0, 20)}...${ep.slice(-15)}`;
+      return `${ep.slice(0, 25)}...${ep.slice(-15)}`;
     };
-
-    console.log(`- Endpoint do Usuário Origem (Excluído): ${maskEndpoint(excludeEndpoint)}`);
-    console.log(`=============================================================\n`);
 
     let firestoreCount = 0;
     let subscriptions: any[] = [];
+    let fsErrorMsg: string | null = null;
 
     // 1. Core database retrieval: Load subscriptions directly from remote persistent Firestore
     try {
-      console.log("[LOG DETALHADO] Solicitando inscrições ativas ao Firestore remoto...");
+      console.log("[LOG DETALHADO - ETAPA 3] Buscando inscrições ativas no Firestore remoto...");
       const fsDocsResult = await getDocsRest("push_subscriptions");
+      
       if (fsDocsResult && fsDocsResult.docs) {
         fsDocsResult.docs.forEach((doc: any) => {
           const docData = doc.data();
@@ -473,10 +479,27 @@ async function startServer() {
           }
         });
         firestoreCount = subscriptions.length;
-        console.log(`[LOG DETALHADO] Quantidade total de subscriptions encontradas no Firestore: ${firestoreCount}`);
+        console.log(`[LOG DETALHADO - ETAPA 3] Total de subscriptions encontradas no Firestore remoto: ${firestoreCount}`);
+      } else {
+        console.warn("[LOG DETALHADO - ETAPA 3] Retorno do Firestore remoto não possui 'docs' ou está vazio.");
       }
     } catch (fsErr: any) {
-      console.warn("[LOG DETALHADO] Erro ao carregar do Firestore via REST:", fsErr.message);
+      fsErrorMsg = fsErr.message || String(fsErr);
+      console.error("[LOG DETALHADO - ETAPA 3] ERRO crítico ao buscar do Firestore remoto via REST:", fsErrorMsg);
+    }
+
+    if (subscriptions.length === 0) {
+      console.log(`\n[LOG DETALHADO - ETAPA 3] AVISO: Nenhuma subscrição válida foi retornada pelo Firestore.`);
+      console.log(`- Motivo provável: ${fsErrorMsg ? `Erro de conexão/permissão Firestore: ${fsErrorMsg}` : "A coleção 'push_subscriptions' está vazia no banco de dados."}`);
+    } else {
+      console.log(`\n--- [LOG DETALHADO - ETAPA 3] LISTA DE SUBSCRIÇÕES ENCONTRADAS NO FIRESTORE ---`);
+      subscriptions.forEach((sub, i) => {
+        console.log(`Firestore Sub #${i + 1}:`);
+        console.log(`  - Doc ID: ${sub.id}`);
+        console.log(`  - User ID: ${sub.userId || "N/A"}`);
+        console.log(`  - Endpoint Mascarado: ${maskEndpoint(sub.subscription.endpoint)}`);
+      });
+      console.log(`---------------------------------------------------------------------------------\n`);
     }
 
     // 2. Fallback: Load and merge from local file cache database (.push-subscriptions.json)
@@ -484,7 +507,8 @@ async function startServer() {
     try {
       const localSubs = readLocalSubscriptions();
       localCount = localSubs.length;
-      console.log(`[LOG DETALHADO] Inscrições encontradas no cache local de segurança: ${localCount}`);
+      console.log(`[LOG DETALHADO - ETAPA 3] Inscrições encontradas no arquivo de cache local de contingência: ${localCount}`);
+      
       localSubs.forEach(localSub => {
         if (!localSub.subscription || !localSub.subscription.endpoint) return;
         const exists = subscriptions.some(s => s.subscription.endpoint === localSub.subscription.endpoint);
@@ -492,27 +516,53 @@ async function startServer() {
           subscriptions.push(localSub);
         }
       });
-    } catch (localErr) {
-      console.error("[LOG DETALHADO] Erro ao carregar inscrições locais:", localErr);
+    } catch (localErr: any) {
+      console.error("[LOG DETALHADO - ETAPA 3] Erro ao carregar inscrições locais:", localErr.message || localErr);
     }
 
-    const beforeFilteringCount = subscriptions.length;
-    console.log(`[LOG DETALHADO] Quantidade total de inscrições unificadas (sem duplicidades): ${beforeFilteringCount}`);
+    const unifiedCount = subscriptions.length;
+    console.log(`[LOG DETALHADO - ETAPA 3] Total de subscrições unificadas (Firestore + Cache Local): ${unifiedCount}`);
 
     // 3. Filter out the excludeEndpoint if specified
     if (excludeEndpoint) {
       subscriptions = subscriptions.filter(sub => sub.subscription.endpoint !== excludeEndpoint);
-      console.log(`[LOG DETALHADO] Filtrando dispositivo de origem. Inscrições restantes: ${subscriptions.length}`);
+      console.log(`[LOG DETALHADO - ETAPA 3] Filtrando dispositivo do usuário autor (excludeEndpoint). Subscrições restantes: ${subscriptions.length}`);
     }
 
-    console.log(`\n--- LISTA DE DISPOSITIVOS DESTINATÁRIOS ---`);
-    subscriptions.forEach((sub, index) => {
-      console.log(`Dispositivo #${index + 1}:`);
-      console.log(`  - ID: ${sub.id}`);
-      console.log(`  - Proprietário (User ID): ${sub.userId || "Desconhecido"}`);
-      console.log(`  - Endpoint mascarado: ${maskEndpoint(sub.subscription.endpoint)}`);
+    // 4. Validate subscriptions (keys.auth, keys.p256dh, endpoint) before trying to send
+    console.log(`\n=============================================================`);
+    console.log(`[LOG DETALHADO - ETAPA 4] VALIDANDO CADA SUBSCRIÇÃO ANTES DO ENVIO`);
+    const validatedSubs: any[] = [];
+    
+    subscriptions.forEach((sub, idx) => {
+      console.log(`Validando Dispositivo #${idx + 1} (ID: ${sub.id}):`);
+      const sObj = sub.subscription;
+      
+      if (!sObj) {
+        console.error(`  - ❌ INVÁLIDA: Objeto de subscrição é nulo ou indefinido.`);
+        return;
+      }
+      
+      const endpointVal = sObj.endpoint;
+      const keysVal = sObj.keys;
+      const authVal = keysVal?.auth;
+      const p256dhVal = keysVal?.p256dh;
+      
+      console.log(`  - Endpoint: "${maskEndpoint(endpointVal)}"`);
+      console.log(`  - Chave Auth presente: ${authVal ? "✅ SIM" : "❌ NÃO"}`);
+      console.log(`  - Chave p256dh presente: ${p256dhVal ? "✅ SIM" : "❌ NÃO"}`);
+      
+      if (!endpointVal) {
+        console.error(`  - ❌ REJEITADA: Faltando propriedade 'endpoint'.`);
+      } else if (!keysVal || !authVal || !p256dhVal) {
+        console.error(`  - ❌ REJEITADA: Faltando chaves criptográficas (auth/p256dh). O navegador não conseguirá decodificar a mensagem.`);
+      } else {
+        console.log(`  - ✅ VALIDADA COM SUCESSO: Estrutura em conformidade.`);
+        validatedSubs.push(sub);
+      }
     });
-    console.log(`-------------------------------------------\n`);
+    console.log(`Total de subscrições válidas prontas para envio: ${validatedSubs.length}/${subscriptions.length}`);
+    console.log(`=============================================================\n`);
 
     let successCount = 0;
     let failureCount = 0;
@@ -520,27 +570,36 @@ async function startServer() {
 
     const payload = JSON.stringify({ title, body: body || "" });
 
-    const sendPromises = subscriptions.map(async (sub) => {
+    // 5. Envio & Resultado individual de cada envio
+    console.log(`\n=============================================================`);
+    console.log(`[LOG DETALHADO - ETAPA 5] INICIANDO ENVIO PELO WEB-PUSH`);
+    
+    const sendPromises = validatedSubs.map(async (sub, idx) => {
       const maskedEp = maskEndpoint(sub.subscription.endpoint);
       const targetUser = sub.userId || "Anônimo/Desconhecido";
-      console.log(`[LOG DETALHADO] Iniciando envio de notificação para [${targetUser}] | ID: ${sub.id} | Endpoint: ${maskedEp}...`);
+      console.log(`\nDisparando para Dispositivo #${idx + 1} [Usuário: ${targetUser}] | ID: ${sub.id}:`);
+      console.log(`  - Endpoint: ${sub.subscription.endpoint}`);
       
       try {
         const response = await webpush.sendNotification(sub.subscription, payload);
         successCount++;
-        // WebPush usually returns success with standard HTTP 201/200 code
         const statusCode = (response as any)?.statusCode || 201;
-        console.log(`[LOG DETALHADO] Resultado individual para [${targetUser}]: SUCESSO | Código HTTP: ${statusCode}`);
+        console.log(`  - 🚀 SUCESSO DO ENVIO para #${idx + 1}:`);
+        console.log(`    - Código HTTP retornado: ${statusCode}`);
+        console.log(`    - Resposta completa:`, JSON.stringify(response || {}));
       } catch (err: any) {
         failureCount++;
         const statusCode = err.statusCode || "Desconhecido";
         const isExpired = err.statusCode === 410 || err.statusCode === 404;
-        const errMsg = err.message || `Erro de envio`;
+        const errMsg = err.message || `Erro desconhecido durante o envio`;
         
-        console.error(`[LOG DETALHADO] Resultado individual para [${targetUser}]: FALHA | Código HTTP: ${statusCode} | Mensagem: ${errMsg}`);
+        console.error(`  - ❌ FALHA DO ENVIO para #${idx + 1}:`);
+        console.error(`    - Código HTTP retornado: ${statusCode}`);
+        console.error(`    - Mensagem de Erro completa:`, err);
+        console.error(`    - Corpo da Exceção:`, JSON.stringify(err || {}));
 
         if (isExpired) {
-          console.log(`[LOG DETALHADO] Detectado endpoint expirado ou inválido (404/410). Programando remoção: ${sub.id}`);
+          console.log(`    - [FALHA 404/410] Subscrição expirou ou foi cancelada no dispositivo do usuário. Programando remoção: ${sub.id}`);
           unsubscribedDocIds.push(sub.id);
           
           try {
@@ -560,32 +619,32 @@ async function startServer() {
           try {
             const deleteUrl = `${FIRESTORE_BASE_URL}/push_subscriptions/${expId}?key=${FIRESTORE_API_KEY}`;
             await fetch(deleteUrl, { method: 'DELETE' });
-            console.log(`[LOG DETALHADO] Removido do Firestore remoto: ${expId}`);
+            console.log(`[LOG DETALHADO - ETAPA 5] Removido do Firestore remoto com sucesso: ${expId}`);
           } catch (e) {}
         }
 
         const remainingSubs = readLocalSubscriptions().filter(s => !unsubscribedDocIds.includes(s.id));
         writeLocalSubscriptions(remainingSubs);
-        console.log(`[LOG DETALHADO] Limpeza concluída de ${unsubscribedDocIds.length} inscrições inválidas.`);
+        console.log(`[LOG DETALHADO - ETAPA 5] Limpeza de cache local concluída para ${unsubscribedDocIds.length} inscrições inválidas.`);
       }
 
       const totalDuration = Date.now() - startTime;
       console.log(`\n=============================================================`);
-      console.log(`[LOG DETALHADO] CONCLUSÃO DO PROCESSAMENTO (BROADCAST)`);
-      console.log(`- Tempo Total de Processamento: ${totalDuration}ms`);
+      console.log(`[LOG DETALHADO - ETAPA 5] CONCLUSÃO DO PROCESSAMENTO`);
+      console.log(`- Tempo Total Decorrido: ${totalDuration}ms`);
       console.log(`- Quantidade de Sucessos: ${successCount}`);
       console.log(`- Quantidade de Falhas: ${failureCount}`);
       console.log(`=============================================================\n`);
 
       res.json({
         success: true,
-        subscriptionsCount: subscriptions.length,
+        subscriptionsCount: validatedSubs.length,
         sucessos: successCount,
         falhas: failureCount,
         durationMs: totalDuration
       });
     } catch (error: any) {
-      console.error("[LOG DETALHADO] Erro crítico no envio geral:", error);
+      console.error("[LOG DETALHADO - ETAPA 5] Erro crítico síncrono no loop de envio:", error);
       res.status(500).json({ success: false, error: error.message });
     }
   });

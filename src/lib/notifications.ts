@@ -99,21 +99,57 @@ export async function sendLocalNotification(title: string, body: string) {
           }
         }
       } catch (swErr) {
-        console.warn('Could not read existing push subscription to exclude:', swErr);
+        console.warn('[INSTRUMENTAÇÃO CLIENTE] Não foi possível ler subscrição atual para exclusão:', swErr);
       }
     }
 
     const userOriginated = auth?.currentUser?.email || auth?.currentUser?.uid || "Desconhecido/Anônimo";
+    const targetUrl = `${window.location.origin}/api/notifications/notify-all`;
+    const requestMethod = 'POST';
+    const payload = { title, body, excludeEndpoint, userOriginated };
 
-    fetch('/api/notifications/notify-all', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ title, body, excludeEndpoint, userOriginated })
-    }).catch(err => console.error('Error broadcasting notification to backend:', err));
+    console.log(`\n=============================================================`);
+    console.log(`[INSTRUMENTAÇÃO CLIENTE] INICIANDO REQUISIÇÃO DE BROADCAST (ETAPA 1)`);
+    console.log(`- URL Completa Utilizada: ${targetUrl}`);
+    console.log(`- Método HTTP: ${requestMethod}`);
+    console.log(`- Usuário de Origem: ${userOriginated}`);
+    console.log(`- Payload Enviado:`, payload);
+    console.log(`=============================================================\n`);
+
+    const reqStartTime = Date.now();
+    try {
+      const res = await fetch(targetUrl, {
+        method: requestMethod,
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const reqDuration = Date.now() - reqStartTime;
+      const responseText = await res.text();
+
+      console.log(`\n=============================================================`);
+      console.log(`[INSTRUMENTAÇÃO CLIENTE] RESPOSTA RECEBIDA DO BACKEND (ETAPA 1)`);
+      console.log(`- Status HTTP da Resposta: ${res.status} (${res.statusText})`);
+      console.log(`- Tempo Total da Requisição: ${reqDuration}ms`);
+      console.log(`- Corpo Completo da Resposta:`, responseText);
+      console.log(`=============================================================\n`);
+
+      if (!res.ok) {
+        console.error(`[INSTRUMENTAÇÃO CLIENTE] Falha na chamada de broadcast de notificação push. Status não-ok: ${res.status}`);
+      }
+    } catch (requestError: any) {
+      const reqDuration = Date.now() - reqStartTime;
+      console.error(`\n=============================================================`);
+      console.error(`[INSTRUMENTAÇÃO CLIENTE] ERRO DE REDE/CONEXÃO NA REQUISIÇÃO (ETAPA 1)`);
+      console.error(`- Tempo até a falha: ${reqDuration}ms`);
+      console.error(`- Detalhes do Erro:`, requestError);
+      console.error(`=============================================================\n`);
+      throw requestError;
+    }
   } catch (err) {
-    console.error('Failed to trigger background notification broadcast:', err);
+    console.error('[INSTRUMENTAÇÃO CLIENTE] Erro global no envio de background push:', err);
   }
 }
 
