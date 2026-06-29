@@ -1,4 +1,4 @@
-import { PushNotificationService } from "../../PushNotificationService";
+import { PushNotificationService } from "../../PushNotificationService.js";
 import dotenv from "dotenv";
 
 dotenv.config();
