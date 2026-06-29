@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
 import { precacheAndRoute } from 'workbox-precaching';
+import { getNotificationsFromIndexedDB, removeNotificationFromIndexedDB } from './lib/offlineQueue';
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -12,7 +13,15 @@ self.addEventListener('install', () => {
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    Promise.all([
+      self.clients.claim(),
+      // Try to sync any remaining offline notifications on SW activation
+      syncOfflineNotificationsInServiceWorker().catch((err) => {
+        console.error('[Service Worker] Erro na sincronização durante ativação:', err);
+      })
+    ])
+  );
 });
 
 // Listen for push notifications from backend (even if app is closed!)
@@ -78,3 +87,54 @@ self.addEventListener('notificationclick', (event) => {
     })
   );
 });
+
+// Background Sync Listener for offline push notifications
+self.addEventListener('sync', (event: any) => {
+  if (event.tag === 'sync-push-notifications') {
+    console.log('[Service Worker] Evento sync "sync-push-notifications" disparado pelo navegador!');
+    event.waitUntil(syncOfflineNotificationsInServiceWorker());
+  }
+});
+
+async function syncOfflineNotificationsInServiceWorker() {
+  try {
+    const queue = await getNotificationsFromIndexedDB();
+    if (queue.length === 0) {
+      console.log('[Service Worker Sync] Fila vazia, nada para sincronizar.');
+      return;
+    }
+
+    console.log(`[Service Worker Sync] Sincronizando ${queue.length} notificações pendentes em plano de fundo...`);
+
+    for (const item of queue) {
+      try {
+        const targetUrl = `${self.location.origin}/api/notifications/notify-all`;
+        
+        console.log(`[Service Worker Sync] Tentando enviar notificação pendente: "${item.title}"`);
+        const res = await fetch(targetUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            title: item.title,
+            body: item.body,
+            originDeviceId: item.originDeviceId,
+            originUserEmail: item.originUserEmail
+          })
+        });
+
+        if (res.ok) {
+          console.log(`[Service Worker Sync] Notificação pendente enviada com sucesso em background: "${item.title}"`);
+          await removeNotificationFromIndexedDB(item.id);
+        } else {
+          console.warn(`[Service Worker Sync] Falha ao enviar em background: "${item.title}" (Status HTTP: ${res.status}). Mantendo na fila.`);
+        }
+      } catch (err) {
+        console.error(`[Service Worker Sync] Erro de conexão ao enviar em background: "${item.title}". Mantendo na fila.`, err);
+      }
+    }
+  } catch (err) {
+    console.error('[Service Worker Sync] Falha geral ao carregar notificações do IndexedDB:', err);
+  }
+}

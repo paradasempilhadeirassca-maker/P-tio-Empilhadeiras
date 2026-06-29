@@ -1,4 +1,10 @@
 import { auth } from '../firebase';
+import { 
+  addNotificationToIndexedDB, 
+  getNotificationsFromIndexedDB, 
+  removeNotificationFromIndexedDB, 
+  QueuedNotification 
+} from './offlineQueue';
 
 /**
  * Generates or retrieves a persistent, unique ID for the current browser/device.
@@ -51,53 +57,30 @@ export async function requestNotificationPermission() {
 }
 
 /**
- * Interface representing a notification in the offline queue.
+ * Register background sync tag 'sync-push-notifications' with the Service Worker, if supported.
+ * This instructs the browser to wake up the service worker and sync in the background when online!
  */
-interface QueuedNotification {
-  id: string;
-  title: string;
-  body: string;
-  originDeviceId: string;
-  originUserEmail: string | null;
-  timestamp: number;
-}
-
-/**
- * Retrieve the current queue of pending push notifications from localStorage.
- */
-function getQueuedNotifications(): QueuedNotification[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const stored = localStorage.getItem('pending_push_notifications');
-    return stored ? JSON.parse(stored) : [];
-  } catch (e) {
-    console.error('[Push Queue] Erro ao carregar fila offline:', e);
-    return [];
+export async function registerBackgroundSync() {
+  if (typeof window !== 'undefined' && 'serviceWorker' in navigator && 'SyncManager' in window) {
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      await (registration as any).sync.register('sync-push-notifications');
+      console.log('[Background Sync] Evento "sync-push-notifications" registrado com sucesso!');
+    } catch (err) {
+      console.warn('[Background Sync] Não foi possível registrar o Background Sync:', err);
+    }
   }
 }
 
 /**
- * Save the queue of pending push notifications to localStorage.
+ * Add a push notification to the offline queue (IndexedDB) and registers background sync.
  */
-function saveQueuedNotifications(notifications: QueuedNotification[]) {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem('pending_push_notifications', JSON.stringify(notifications));
-  } catch (e) {
-    console.error('[Push Queue] Erro ao salvar fila offline:', e);
-  }
-}
-
-/**
- * Add a push notification to the offline queue.
- */
-export function queueNotification(
+export async function queueNotification(
   title: string,
   body: string,
   originDeviceId: string,
   originUserEmail: string | null
 ) {
-  const queue = getQueuedNotifications();
   const newItem: QueuedNotification = {
     id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'q_' + Math.random().toString(36).substring(2, 11),
     title,
@@ -106,9 +89,12 @@ export function queueNotification(
     originUserEmail,
     timestamp: Date.now()
   };
-  queue.push(newItem);
-  saveQueuedNotifications(queue);
-  console.log(`[Push Queue] Notificação adicionada à fila offline (Total pendentes: ${queue.length}): "${title}"`);
+  
+  await addNotificationToIndexedDB(newItem);
+  console.log(`[Push Queue] Notificação adicionada à fila offline persistente (IndexedDB): "${title}"`);
+  
+  // Register background sync so that browser automatically fires sync even when app is closed!
+  await registerBackgroundSync();
 }
 
 /**
@@ -122,13 +108,12 @@ export async function syncPendingNotifications() {
     return;
   }
 
-  const queue = getQueuedNotifications();
+  const queue = await getNotificationsFromIndexedDB();
   if (queue.length === 0) {
     return;
   }
 
-  console.log(`[Push Queue] Sincronização ativada: processando ${queue.length} notificações pendentes...`);
-  const remaining: QueuedNotification[] = [];
+  console.log(`[Push Queue] Sincronização ativada: processando ${queue.length} notificações pendentes do IndexedDB...`);
 
   for (const item of queue) {
     try {
@@ -148,21 +133,21 @@ export async function syncPendingNotifications() {
 
       if (res.ok) {
         console.log(`[Push Queue] Notificação pendente enviada com sucesso: "${item.title}"`);
+        // Remove from IndexedDB on success!
+        await removeNotificationFromIndexedDB(item.id);
       } else {
         console.warn(`[Push Queue] Falha ao enviar notificação pendente "${item.title}" (Status HTTP: ${res.status}). Mantendo na fila.`);
-        remaining.push(item);
       }
     } catch (err) {
       console.error(`[Push Queue] Erro de conexão ao tentar enviar notificação "${item.title}". Mantendo na fila para nova tentativa.`, err);
-      remaining.push(item);
     }
   }
 
-  saveQueuedNotifications(remaining);
+  const remaining = await getNotificationsFromIndexedDB();
   if (remaining.length === 0) {
     console.log('[Push Queue] Todas as notificações offline pendentes foram enviadas com sucesso! 🎉');
   } else {
-    console.log(`[Push Queue] Fila atualizada: restam ${remaining.length} notificações pendentes.`);
+    console.log(`[Push Queue] Fila atualizada no IndexedDB: restam ${remaining.length} notificações pendentes.`);
   }
 }
 
@@ -209,7 +194,7 @@ export async function sendLocalNotification(title: string, body: string, trigger
 
     if (!navigator.onLine) {
       console.log(`[Push Client] Dispositivo offline. Enfileirando notificação de push: "${title}"`);
-      queueNotification(title, body, originDeviceId, originUserEmail);
+      await queueNotification(title, body, originDeviceId, originUserEmail);
     } else {
       try {
         const targetUrl = `${window.location.origin}/api/notifications/notify-all`;
@@ -230,7 +215,7 @@ export async function sendLocalNotification(title: string, body: string, trigger
 
         if (!res.ok) {
           console.error(`[Push Client] Broadcast failed with status ${res.status}. Enfileirando para envio posterior.`);
-          queueNotification(title, body, originDeviceId, originUserEmail);
+          await queueNotification(title, body, originDeviceId, originUserEmail);
         } else {
           const data = await res.json();
           console.log(`[Push Client] Broadcast processed successfully:`, data);
@@ -240,7 +225,7 @@ export async function sendLocalNotification(title: string, body: string, trigger
         }
       } catch (err) {
         console.error('[Push Client] Error sending broadcast request, enqueuing for later:', err);
-        queueNotification(title, body, originDeviceId, originUserEmail);
+        await queueNotification(title, body, originDeviceId, originUserEmail);
       }
     }
   }
