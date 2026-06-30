@@ -79,6 +79,7 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
   const [showNotificationBanner, setShowNotificationBanner] = useState<boolean>(false);
   const [isSubscribingPush, setIsSubscribingPush] = useState<boolean>(false);
   const [pushStatusMsg, setPushStatusMsg] = useState<string>('');
+  const [showNotificationInstructions, setShowNotificationInstructions] = useState<boolean>(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && 'Notification' in window) {
@@ -354,36 +355,79 @@ export function HomeMenu({ profile, onViewChange, onLogout }: HomeMenuProps) {
 
         {/* Dynamic Push Notification Opt-in Banner */}
         {showNotificationBanner && (
-          <div className="mb-8 p-6 bg-blue-50 border border-blue-200 rounded-[2rem] shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-4 duration-300">
-            <div className="flex items-start gap-4">
-              <div className="p-3 bg-blue-600 rounded-2xl text-white shrink-0 shadow-md">
-                <BellRing className="w-6 h-6 animate-bounce" />
+          <div className="mb-8 p-6 bg-blue-50 border border-blue-200 rounded-[2rem] shadow-sm flex flex-col gap-4 animate-in fade-in slide-in-from-top-4 duration-300">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-blue-600 rounded-2xl text-white shrink-0 shadow-md">
+                  <BellRing className="w-6 h-6 animate-bounce" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 tracking-tight">Ativar Notificações no Celular/Aparelho</h3>
+                  <p className="text-slate-600 text-sm font-medium leading-relaxed mt-1">
+                    Receba alertas de <strong>Registros de Ocorrências</strong>, <strong>Check-Lists</strong> e do <strong>Início/Fim de Manutenção</strong> em tempo real, mesmo com o aplicativo fechado!
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-base font-black text-slate-900 tracking-tight">Ativar Notificações no Celular/Aparelho</h3>
-                <p className="text-slate-600 text-sm font-medium leading-relaxed mt-1">
-                  Receba alertas de <strong>Registros de Ocorrências</strong>, <strong>Check-Lists</strong> e do <strong>Início/Fim de Manutenção</strong> em tempo real, mesmo com o aplicativo fechado!
-                </p>
+              <div className="flex items-center gap-3 w-full md:w-auto self-end md:self-center shrink-0">
+                <button
+                  onClick={() => setShowNotificationInstructions(!showNotificationInstructions)}
+                  className="px-4 py-3 bg-white hover:bg-slate-100 rounded-xl text-blue-600 hover:text-blue-700 font-bold text-xs uppercase tracking-widest border border-blue-200 transition-all active:scale-95 flex-1 md:flex-none text-center"
+                >
+                  {showNotificationInstructions ? 'Fechar Instruções' : 'Como Funciona? 📱'}
+                </button>
+                <button
+                  onClick={() => {
+                    localStorage.setItem('dismiss_push_banner_v2', 'true');
+                    setShowNotificationBanner(false);
+                  }}
+                  className="px-4 py-3 bg-white hover:bg-slate-100 rounded-xl text-slate-500 hover:text-slate-700 font-bold text-xs uppercase tracking-widest border border-slate-200 transition-all active:scale-95 flex-1 md:flex-none text-center"
+                >
+                  Esconder
+                </button>
+                <button
+                  onClick={handleEnableNotifications}
+                  disabled={isSubscribingPush}
+                  className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs uppercase tracking-widest shadow-md transition-all active:scale-95 disabled:opacity-50 flex-1 md:flex-none text-center flex items-center justify-center gap-2"
+                >
+                  {isSubscribingPush ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Ativar Agora'}
+                </button>
               </div>
             </div>
-            <div className="flex items-center gap-3 w-full md:w-auto self-end md:self-center">
-              <button
-                onClick={() => {
-                  localStorage.setItem('dismiss_push_banner_v2', 'true');
-                  setShowNotificationBanner(false);
-                }}
-                className="px-4 py-3 bg-white hover:bg-slate-100 rounded-xl text-slate-500 hover:text-slate-700 font-bold text-xs uppercase tracking-widest border border-slate-200 transition-all active:scale-95 flex-1 md:flex-none text-center"
-              >
-                Esconder
-              </button>
-              <button
-                onClick={handleEnableNotifications}
-                disabled={isSubscribingPush}
-                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs uppercase tracking-widest shadow-md transition-all active:scale-95 disabled:opacity-50 flex-1 md:flex-none text-center flex items-center justify-center gap-2"
-              >
-                {isSubscribingPush ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Ativar Agora'}
-              </button>
-            </div>
+
+            {showNotificationInstructions && (
+              <div className="mt-2 p-5 bg-white border border-slate-150 rounded-2xl grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="space-y-3">
+                  <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-2 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-blue-600"></span>
+                    Para iPhone (iOS) - Recomendado/Obrigatório
+                  </h4>
+                  <ul className="text-xs text-slate-600 space-y-2 list-decimal list-inside font-medium leading-relaxed">
+                    <li>No Safari do seu iPhone, clique no botão de <strong className="text-blue-600">Compartilhar</strong> (ícone de um quadrado com uma seta apontando para cima).</li>
+                    <li>Role as opções para baixo e clique em <strong className="text-blue-600">"Adicionar à Tela de Início"</strong>.</li>
+                    <li>Abra o aplicativo através do novo ícone criado na tela inicial do seu celular.</li>
+                    <li>Clique no botão <strong className="text-blue-600">"Ativar Agora"</strong> acima e, quando o iOS perguntar se deseja enviar notificações, clique em <strong className="text-blue-600">Permitir</strong>.</li>
+                  </ul>
+                  <p className="text-[10px] text-amber-600 font-bold leading-relaxed bg-amber-50 p-2.5 rounded-xl border border-amber-100 mt-2">
+                    ⚠️ Importante: A Apple por segurança bloqueia o envio de notificações push em plano de fundo se você usar o site aberto em uma aba comum do Safari. É obrigatório instalar o ícone na Tela de Início!
+                  </p>
+                </div>
+                <div className="space-y-3">
+                  <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-2 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
+                    Para Android (Samsung, Motorola, Xiaomi, etc.)
+                  </h4>
+                  <ul className="text-xs text-slate-600 space-y-2 list-decimal list-inside font-medium leading-relaxed">
+                    <li>Clique no botão azul <strong className="text-blue-600">"Ativar Agora"</strong> acima.</li>
+                    <li>Quando o navegador perguntar se deseja enviar notificações, selecione <strong className="text-blue-600">"Permitir"</strong> (Allow).</li>
+                    <li>Para obter o aplicativo completo sem barras de endereço, clique em instalar aplicativo nas configurações do navegador Chrome.</li>
+                    <li>Para garantir que os alertas cheguem instantaneamente com o app fechado, certifique-se de que o navegador Chrome não está na lista de "suspensão profunda" ou "economia extrema de bateria" em suas configurações do celular.</li>
+                  </ul>
+                  <p className="text-[10px] text-blue-600 font-bold leading-relaxed bg-blue-50/50 p-2.5 rounded-xl border border-blue-100/50 mt-2">
+                    📶 Sincronização Inteligente: Graças à tecnologia do aplicativo, caso seu celular perca a internet ao registrar algo, os alertas são guardados e serão disparados de forma automática em segundo plano assim que a conexão voltar!
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
